@@ -6,6 +6,14 @@ import Reveal from '../components/Reveal'
 import CountryLinksBuilder, { flattenCountryBlocks } from '../components/CountryLinksBuilder'
 
 const TRACK_BASE = 'https://pack-talk-dashboard.vercel.app/api/track'
+
+const GLOBAL_TRACKING_LINKS = [
+  { label: 'Complete', status: 'complete', url: `${TRACK_BASE}?status=complete&assignUid=[UID]` },
+  { label: 'Terminate', status: 'terminate', url: `${TRACK_BASE}?status=terminate&assignUid=[UID]` },
+  { label: 'Quota Full', status: 'quotafull', url: `${TRACK_BASE}?status=quotafull&assignUid=[UID]` },
+  { label: 'Security', status: 'security', url: `${TRACK_BASE}?status=security&assignUid=[UID]` },
+]
+
 const EMPTY_PROJECT = { project_id: '', project_name: '', description: '', target: '', loi: '', ir: '', country: '', launch_date: '', survey_link: '' }
 
 export default function ClientDashboard() {
@@ -111,15 +119,6 @@ export default function ClientDashboard() {
     }
   }
 
-  function getUniqueTrackingLink() {
-    return [
-      { label: 'Complete', status: 'complete', url: `${TRACK_BASE}?status=complete&assignUid=RESPONDENT_ID` },
-      { label: 'Terminate', status: 'terminate', url: `${TRACK_BASE}?status=terminate&assignUid=RESPONDENT_ID` },
-      { label: 'Quota Full', status: 'quotafull', url: `${TRACK_BASE}?status=quotafull&assignUid=RESPONDENT_ID` },
-      { label: 'Security', status: 'security', url: `${TRACK_BASE}?status=security&assignUid=RESPONDENT_ID` },
-    ]
-  }
-
   function copyLink(key, url) {
     navigator.clipboard.writeText(url)
     setCopiedKey(key)
@@ -127,13 +126,14 @@ export default function ClientDashboard() {
   }
 
   function copyAllLinks() {
-    const links = getUniqueTrackingLink()
     const formatted = [
-      `PackTalk Tracking Links`,
+      `PackTalk Global Tracking Links`,
       '',
-      ...links.map((l) => `${l.label}: ${l.url}`),
+      ...GLOBAL_TRACKING_LINKS.map((l) => `${l.label}: ${l.url}`),
       '',
-      'Replace RESPONDENT_ID with the dynamic respondent ID variable from your survey tool.',
+      'Replace [UID] with the dynamic respondent ID variable from your survey tool.',
+      '',
+      'Respondents must be registered first via POST /api/register-respondent using a client API key.',
     ].join('\n')
 
     navigator.clipboard.writeText(formatted)
@@ -149,23 +149,6 @@ export default function ClientDashboard() {
       terminated: rows.filter((r) => r.status === 'Terminated').length,
       quotaFull: rows.filter((r) => r.quota_status === 'Full').length,
     }
-  }
-
-  function quotaGroupsFor(project_id) {
-    const projectQuotas = quotas.filter((q) => q.project_id === project_id)
-    const groups = {}
-    projectQuotas.forEach((q) => {
-      const key = `${q.country}|||${q.age_band}`
-      if (!groups[key]) groups[key] = { country: q.country, age_band: q.age_band, links: [], totalTarget: 0 }
-      groups[key].links.push(q)
-      groups[key].totalTarget += q.target_count || 0
-    })
-    return Object.values(groups).map((g) => {
-      const done = responses.filter(
-        (r) => r.project_id === project_id && r.country === g.country && r.age_band === g.age_band && r.completed
-      ).length
-      return { ...g, done, toGo: Math.max(g.totalTarget - done, 0) }
-    })
   }
 
   function quotaRowsFor(project_id) {
@@ -386,7 +369,6 @@ export default function ClientDashboard() {
       {projects.map((p) => {
         const stats = statFor(p.project_id)
         const quotaRows = quotaRowsFor(p.project_id)
-        const quotaGroups = quotaGroupsFor(p.project_id)
         return (
           <Reveal key={p.project_id}>
           <div className="card" style={{ marginBottom: 20 }}>
@@ -457,25 +439,34 @@ export default function ClientDashboard() {
                         </tr>
                       ))}
                     </tbody>
-                         <p className="card-hint" style={{ marginTop: 6 }}>
-                    Done/To Go is tracked per country + age band group.
+                  </table>
+                  <p className="card-hint" style={{ marginTop: 6 }}>
+                    Done/To Go is tracked per country + age band group — responses can't be tied back to one specific link if a country has more than one.
                   </p>
                 </div>
               </>
+            ) : (
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ fontSize: 15, marginBottom: 6 }}>Quota Progress</h3>
+                <p className="card-hint">
+                  No quota data yet for this survey. Set up countries &amp; links using the "Upload Quota Brief" section below to start tracking Done vs To Go by country and age band.
+                </p>
+              </div>
             )}
 
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ marginTop: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                <h3 style={{ fontSize: 15, margin: 0 }}>Unique Tracking Links</h3>
+                <h3 style={{ fontSize: 15, margin: 0 }}>Tracking Links (Global)</h3>
                 <button type="button" className="btn-ghost" onClick={() => copyAllLinks()}>
                   {copiedKey === 'all_links' ? 'Copied All ✓' : 'Copy All Links'}
                 </button>
               </div>
               <p className="card-hint">
-                Share these links with the client. They configure their panel to redirect here after survey completion. Replace <code>RESPONDENT_ID</code> with respondent ID.
+                These links are global and work for every project. Register each respondent via the registration API
+                so PackTalk knows which project to log them under. Replace <code>[UID]</code> with the respondent ID.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
-                {getUniqueTrackingLink().map((link) => (
+                {GLOBAL_TRACKING_LINKS.map((link) => (
                   <div key={link.status} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>{link.label}</span>
                     <input
@@ -487,9 +478,11 @@ export default function ClientDashboard() {
                     <button type="button" className="btn-ghost" onClick={() => copyLink(link.status, link.url)}>
                       {copiedKey === link.status ? 'Copied ✓' : 'Copy'}
                     </button>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        )
           </Reveal>
         )
       })}
