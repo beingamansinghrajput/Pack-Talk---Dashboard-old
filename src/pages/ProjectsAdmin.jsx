@@ -159,30 +159,6 @@ export default function ProjectsAdmin() {
     load()
   }
 
-  function getGenericTrackingLinks() {
-    return [
-      { label: 'Complete', status: 'complete', url: `${TRACK_BASE}?project=[PID]&uid=[UID]&status=complete` },
-      { label: 'Terminate', status: 'terminate', url: `${TRACK_BASE}?project=[PID]&uid=[UID]&status=terminate` },
-      { label: 'Quota Full', status: 'quotafull', url: `${TRACK_BASE}?project=[PID]&uid=[UID]&status=quotafull` },
-      { label: 'Security', status: 'security', url: `${TRACK_BASE}?project=[PID]&uid=[UID]&status=security` },
-    ]
-  }
-
-  function copyAllGenericLinks() {
-    const links = getGenericTrackingLinks()
-    const formatted = [
-      'PackTalk Tracking Links — Generic Template',
-      '',
-      ...links.map((l) => `${l.label}: ${l.url}`),
-      '',
-      "Replace [PID] with the Project ID for this survey, [UID] with your respondent ID variable.",
-      'The Project ID must be created in PackTalk before the survey goes live, or hits will fail.',
-    ].join('\n')
-    navigator.clipboard.writeText(formatted)
-    setCopiedKey('generic_all')
-    setTimeout(() => setCopiedKey(null), 1500)
-  }
-
   function getTrackingLinks(project_id) {
     return [
       { label: 'Complete', status: 'complete', url: `${TRACK_BASE}?project=${project_id}&uid=[UID]&status=complete` },
@@ -402,37 +378,6 @@ export default function ProjectsAdmin() {
     <div className="page">
       <h1>Manage Projects</h1>
       <p className="page-sub">Add a new survey project so your team can start punching in responses.</p>
-
-      <Reveal>
-        <div className="card" style={{ maxWidth: 720, marginBottom: 20 }}>
-          <h2 className="card-title">Generic Integration Links</h2>
-          <p className="card-hint">
-            Send these to a new client before their project even exists in PackTalk. Replace <code>[PID]</code> with the real Project ID,
-            <code>[UID]</code> with their respondent ID variable. Just make sure the Project ID is created below before the survey actually goes live.
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 10 }}>
-            <button type="button" className="btn-ghost" onClick={copyAllGenericLinks}>
-              {copiedKey === 'generic_all' ? 'Copied All ✓' : 'Copy All Links'}
-            </button>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {getGenericTrackingLinks().map((link) => (
-              <div key={link.status} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>{link.label}</span>
-                <input
-                  readOnly
-                  value={link.url}
-                  onFocus={(e) => e.target.select()}
-                  style={{ flex: 1, minWidth: 260, fontFamily: 'monospace', fontSize: 12 }}
-                />
-                <button type="button" className="btn-ghost" onClick={() => copyLink('generic_' + link.status, link.url)}>
-                  {copiedKey === ('generic_' + link.status) ? 'Copied ✓' : 'Copy'}
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Reveal>
 
       {isAdmin && (
         <Reveal>
