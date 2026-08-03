@@ -5,7 +5,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-
 const STATUS_MAP = {
   complete: { completed: true, screener_pass: true, quota_status: 'Open' },
   terminate: { completed: false, screener_pass: false, quota_status: 'Open' },
@@ -263,39 +262,65 @@ function rateLimitedHtml() {
   `
 }
 
+function notRegisteredHtml() {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Respondent Not Registered</title>
+      <style>
+        body { font-family: -apple-system, sans-serif; background: #0a0a0f; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
+        .card { background: #16161f; border: 1px solid #2a2a3a; border-radius: 16px; padding: 28px 32px; max-width: 480px; width: 100%; text-align: center; }
+        h1 { font-size: 18px; margin: 0 0 10px 0; }
+        p { color: #999; font-size: 14px; }
+        code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h1>Respondent Not Registered</h1>
+        <p>This UID has not been registered for any project. The client must call <code>POST /api/register-respondent</code> with this respondent&apos;s UID before sending them to a tracking link.</p>
+      </div>
+    </body>
+    </html>
+  `
+}
+
 export default async function handler(req, res) {
   const { status } = req.query
   const uid = req.query.assignUid || req.query.uid
 
   if (!uid || !status) {
-    return res.status(400).send('Missing required parameters: status or assignUid is missing.')
+    return res.status(400).send('Missing required parameters: link is missing its status or assignUid.')
   }
 
-  let mapping = STATUS_MAP[status.toLowerCase()]
+  const mapping = STATUS_MAP[status.toLowerCase()]
   if (!mapping) {
     return res.status(400).send('Invalid status. Use: complete, terminate, quotafull, or security')
   }
 
-  // Look up the respondent ID in respondent_registry to identify project, country, and age_band
-  const { data: registryMatch, error: registryError } = await supabase
+  // The global tracking links carry no project info — resolve it from the
+  // registry the client populated via POST /api/register-respondent.
+  const { data: regRows, error: regError } = await supabase
     .from('respondent_registry')
     .select('project_id, country, age_band')
     .eq('uid', uid)
     .order('registered_at', { ascending: false })
     .limit(1)
-    .maybeSingle()
 
-  if (registryError) {
-    return res.status(500).send('Error searching respondent registry: ' + registryError.message)
+  if (regError) {
+    return res.status(500).send('Error looking up respondent registration: ' + regError.message)
   }
 
-  if (!registryMatch) {
-    return res.status(404).send(`Respondent ID "${uid}" is not registered to any project. The client's system must register the respondent first.`)
+  const registration = regRows && regRows[0]
+  if (!registration || !registration.project_id) {
+    res.setHeader('Content-Type', 'text/html')
+    return res.status(400).send(notRegisteredHtml())
   }
 
-  const project = registryMatch.project_id
-  const country = registryMatch.country
-  const age_band = registryMatch.age_band
+  const project = registration.project_id
+  const country = registration.country || null
+  const age_band = registration.age_band || null
 
   const forwarded = req.headers['x-forwarded-for']
   const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket?.remoteAddress || 'unknown'
@@ -356,8 +381,25 @@ export default async function handler(req, res) {
     if (error.code === '23503') {
       return res.status(404).send(`Project "${project}" does not exist in PackTalk yet. Create it first, then this link will start logging hits.`)
     }
-    return res.status(500).send('Error logging response: ' + error.message)
+    if (error.code === '23505') {
+      // The respondent already has a response on this project (unique
+      // project_id + uid) — update it to the latest status instead of
+      // creating a duplicate row.
+      const { error: updateError } = await supabase
+        .from('responses')
+        .update(responseData)
+        .eq('project_id', project)
+        .eq('uid', uid)
+      if (updateError) {
+        return res.status(500).send('Error updating response: ' + updateError.message)
+      }
+    } else {
+      return res.status(500).send('Error logging response: ' + error.message)
+    }
   }
+
+  // Mark the registration as consumed so admins can see which have been used.
+  supabase.from('respondent_registry').update({ status: 'consumed' }).eq('uid', uid).then(() => {})
 
   let clientRedirectTemplate = null
   if (country) {
@@ -386,8 +428,4 @@ export default async function handler(req, res) {
     complete: 'Completed',
     terminate: 'Terminated',
     quotafull: 'Quota Full',
-    security: 'Security Terminated',
-  }[finalStatusKey]
-
-  return res.status(200).send(confirmationHtml({ project, uid, ip, statusLabel, finalStatusKey, isDuplicateIp, redirectUrl }))
-}
+    security
