@@ -6,7 +6,6 @@ import Dashboard from './pages/Dashboard'
 import ProjectDetail from './pages/ProjectDetail'
 import ProjectsAdmin from './pages/ProjectsAdmin'
 import Team from './pages/Team'
-import Upload from './pages/Upload'
 import Earnings from './pages/Earnings'
 import Exports from './pages/Exports'
 import ClientDashboard from './pages/ClientDashboard'
@@ -84,16 +83,6 @@ function AppRoutes() {
             <ProtectedRoute>
               <OpsRoute>
                 <Team />
-              </OpsRoute>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/upload"
-          element={
-            <ProtectedRoute>
-              <OpsRoute>
-                <Upload />
               </OpsRoute>
             </ProtectedRoute>
           }
