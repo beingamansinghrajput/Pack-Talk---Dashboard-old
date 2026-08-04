@@ -68,6 +68,8 @@ export default function ProjectsAdmin() {
 
   const [allQuotas, setAllQuotas] = useState([])
 
+  const [responseStats, setResponseStats] = useState([])
+
   const [surveyLinks, setSurveyLinks] = useState([])
   const [genCountry, setGenCountry] = useState('')
   const [genAgeBand, setGenAgeBand] = useState('')
@@ -77,7 +79,7 @@ export default function ProjectsAdmin() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const [{ data: projectData }, { data: teamData }, { data: tpData }, { data: memberData }, { data: rateData }, { data: quotaData }, { data: linksData }] = await Promise.all([
+    const [{ data: projectData }, { data: teamData }, { data: tpData }, { data: memberData }, { data: rateData }, { data: quotaData }, { data: linksData }, { data: responseStatsRaw }] = await Promise.all([
       supabase.from('projects').select('*').order('created_at', { ascending: false }),
       supabase.from('teams').select('*').order('name'),
       supabase.from('team_projects').select('*'),
@@ -85,6 +87,7 @@ export default function ProjectsAdmin() {
       supabase.from('rates').select('*'),
       supabase.from('project_quotas').select('*'),
       supabase.from('survey_links').select('*').order('created_at', { ascending: false }),
+      supabase.from('responses').select('project_id, completed, quota_status'),
     ])
     setProjects(projectData || [])
     setTeams(teamData || [])
@@ -93,6 +96,7 @@ export default function ProjectsAdmin() {
     setRates(rateData || [])
     setAllQuotas(quotaData || [])
     setSurveyLinks(linksData || [])
+    setResponseStats(responseStatsRaw || [])
     if (!quotaProjectId && projectData && projectData.length > 0) {
       setQuotaProjectId(projectData[0].project_id)
     }
@@ -366,6 +370,35 @@ export default function ProjectsAdmin() {
     reader.readAsBinaryString(quotaFile)
   }
 
+  const projectStats = useMemo(() => {
+    const map = {}
+    for (const r of responseStats) {
+      if (!r.project_id) continue
+      if (!map[r.project_id]) {
+        map[r.project_id] = { hits: 0, completes: 0, quotafull: 0, drops: 0 }
+      }
+      const s = map[r.project_id]
+      s.hits += 1
+      if (r.completed) {
+        s.completes += 1
+      } else if (r.quota_status === 'Full') {
+        s.quotafull += 1
+      } else {
+        s.drops += 1
+      }
+    }
+    for (const project_id in map) {
+      const s = map[project_id]
+      const qualified = s.completes + s.quotafull
+      s.ir = s.hits > 0 ? Math.round((qualified / s.hits) * 100) : 0
+    }
+    return map
+  }, [responseStats])
+
+  function getProjectStats(project_id) {
+    return projectStats[project_id] || { hits: 0, completes: 0, quotafull: 0, drops: 0, ir: 0 }
+  }
+
   const filteredProjects = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return projects
@@ -529,17 +562,30 @@ export default function ProjectsAdmin() {
           <div className="table-wrap">
             <table className="data-table">
               <thead>
-                <tr><th>Project ID</th><th>Name</th><th>Country</th><th>Target</th><th>Status</th><th>Teams</th><th></th></tr>
+                <tr><th>Project ID</th><th>Name</th><th>Country</th><th>Target</th><th>Hits</th><th>Completes</th><th>Drops</th><th>QF</th><th>IR%</th><th>Status</th><th>Teams</th><th></th></tr>
               </thead>
               <tbody>
                 {filteredProjects.map((p) => {
                   const linkedTeamIds = teamProjects.filter((tp) => tp.project_id === p.project_id).map((tp) => tp.team_id)
+                  const stats = getProjectStats(p.project_id)
                   return (
                     <tr key={p.project_id}>
                       <td>{p.project_id}</td>
                       <td>{p.project_name}</td>
                       <td>{p.country}</td>
                       <td>{p.target}</td>
+                      <td>{stats.hits}</td>
+                      <td>{stats.completes}</td>
+                      <td>{stats.drops}</td>
+                      <td>{stats.quotafull}</td>
+                      <td>
+                        <span
+                          className={`badge ${stats.hits === 0 ? 'badge-gray' : stats.ir >= (p.ir || 0) ? 'badge-green' : 'badge-gray'}`}
+                          title={p.ir ? `Target IR: ${p.ir}%` : 'No target IR set'}
+                        >
+                          {stats.hits === 0 ? '—' : `${stats.ir}%`}
+                        </span>
+                      </td>
                       <td><span className={`badge ${p.status === 'Live' ? 'badge-green' : 'badge-gray'}`}>{p.status}</span></td>
                       <td>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -583,7 +629,7 @@ export default function ProjectsAdmin() {
                   )
                 })}
                 {filteredProjects.length === 0 && (
-                  <tr><td colSpan={7} className="empty-row">No projects match your search.</td></tr>
+                  <tr><td colSpan={12} className="empty-row">No projects match your search.</td></tr>
                 )}
               </tbody>
             </table>
