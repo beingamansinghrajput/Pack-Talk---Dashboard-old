@@ -10,6 +10,7 @@ import Upload from './pages/Upload'
 import Earnings from './pages/Earnings'
 import Exports from './pages/Exports'
 import ClientDashboard from './pages/ClientDashboard'
+import LinkGenerator from './pages/LinkGenerator'
 
 function ProtectedRoute({ children }) {
   const { session, loading } = useAuth()
@@ -26,6 +27,11 @@ function AdminRoute({ children }) {
 function OpsRoute({ children }) {
   const { canAccessOpsPages } = useAuth()
   return canAccessOpsPages ? children : <Navigate to="/" replace />
+}
+
+function NonClientRoute({ children }) {
+  const { isClient } = useAuth()
+  return isClient ? <Navigate to="/" replace /> : children
 }
 
 function HomeRoute() {
@@ -107,6 +113,16 @@ function AppRoutes() {
               <OpsRoute>
                 <Exports />
               </OpsRoute>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/link-generator"
+          element={
+            <ProtectedRoute>
+              <NonClientRoute>
+                <LinkGenerator />
+              </NonClientRoute>
             </ProtectedRoute>
           }
         />
