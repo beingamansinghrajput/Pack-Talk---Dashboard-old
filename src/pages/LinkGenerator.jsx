@@ -3,7 +3,19 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import Reveal from '../components/Reveal'
 
-const EMPTY = { client_link: '', raw_uid: '', sting: '', project_note: '' }
+const EMPTY = {
+  client_link: '',
+  raw_uid: '',
+  project_id: '',
+  project_name: '',
+  description: '',
+  country: '',
+  req_completes: '',
+  max_completes: '',
+  loi: '',
+  ir: '',
+  launch_date: '',
+}
 
 function randomClientFacingId() {
   // 15-digit random numeric string, first digit non-zero
@@ -50,7 +62,7 @@ export default function LinkGenerator() {
     setEntriesLoading(true)
     let q = supabase
       .from('client_link_entries')
-      .select('id, client_facing_id, sting, raw_uid, project_note, created_at, created_by, profiles:created_by(full_name, email)')
+      .select('id, client_facing_id, raw_uid, project_id, created_at, created_by, profiles:created_by(full_name, email)')
       .order('created_at', { ascending: false })
       .limit(50)
     if (!canAccessOpsPages) q = q.eq('created_by', user.id)
@@ -59,16 +71,28 @@ export default function LinkGenerator() {
     setEntriesLoading(false)
   }
 
+  async function getUniqueClientFacingId() {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = randomClientFacingId()
+      const { data } = await supabase
+        .from('client_link_entries')
+        .select('id')
+        .eq('client_facing_id', candidate)
+        .maybeSingle()
+      if (!data) return candidate
+    }
+    throw new Error('Could not generate a unique ID — try again.')
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     setMessage(null)
     setResult(null)
 
-    const link = form.client_link.trim()
+    const clientLink = form.client_link.trim()
     const rawUid = form.raw_uid.trim()
-    const sting = form.sting.trim().toUpperCase()
 
-    if (!link) {
+    if (!clientLink) {
       setMessage({ type: 'error', text: "Paste the client's survey link first." })
       return
     }
@@ -76,46 +100,57 @@ export default function LinkGenerator() {
       setMessage({ type: 'error', text: 'Enter the UID / random letters.' })
       return
     }
-    if (!sting) {
-      setMessage({ type: 'error', text: 'Enter the sting.' })
+    if (!form.project_id.trim() || !form.project_name.trim() || !form.country.trim()) {
+      setMessage({ type: 'error', text: 'Project ID, Project Name, and Country are required.' })
       return
     }
 
     setBusy(true)
+    try {
+      const clientFacingId = await getUniqueClientFacingId()
+      const finalLink = buildFinalLink(clientLink, clientFacingId)
 
-    // Try a few times in case of a random collision on the unique client_facing_id.
-    let saved = null
-    let lastErr = null
-    for (let attempt = 0; attempt < 5 && !saved; attempt++) {
-      const clientFacingId = randomClientFacingId()
-      const finalLink = buildFinalLink(link, clientFacingId)
-      const { data, error } = await supabase
+      const { data: project, error: projectError } = await supabase
+        .from('projects')
+        .insert({
+          project_id: form.project_id.trim(),
+          project_name: form.project_name.trim(),
+          description: form.description.trim() || null,
+          country: form.country.trim(),
+          req_completes: Number(form.req_completes) || 0,
+          max_completes: Number(form.max_completes) || Number(form.req_completes) || 0,
+          loi: Number(form.loi) || 0,
+          ir: Number(form.ir) || 0,
+          launch_date: form.launch_date || new Date().toISOString().slice(0, 10),
+          survey_link: finalLink,
+          created_by: user.id,
+        })
+        .select()
+        .single()
+
+      if (projectError) throw projectError
+
+      const { data: entry, error: entryError } = await supabase
         .from('client_link_entries')
         .insert({
-          project_note: form.project_note.trim() || null,
+          project_id: project.project_id,
           raw_uid: rawUid,
-          sting,
           client_facing_id: clientFacingId,
           final_link: finalLink,
           created_by: user.id,
         })
         .select()
         .single()
-      if (!error) {
-        saved = data
-      } else {
-        lastErr = error
-      }
-    }
 
-    setBusy(false)
-    if (!saved) {
-      setMessage({ type: 'error', text: lastErr?.message || 'Could not generate a link — try again.' })
-      return
+      if (entryError) throw entryError
+
+      setResult(entry)
+      setForm(EMPTY)
+      loadEntries()
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message })
     }
-    setResult(saved)
-    setForm(EMPTY)
-    loadEntries()
+    setBusy(false)
   }
 
   function copyResult() {
@@ -131,14 +166,14 @@ export default function LinkGenerator() {
         <div className="page-header">
           <div>
             <h1>Link Generator</h1>
-            <p className="page-sub">Paste the client's link and generate the version we actually send out — the client only ever sees a random ID, never the raw UID.</p>
+            <p className="page-sub">Add a new survey using the client's link — the client only ever sees a random ID, never the raw UID.</p>
           </div>
         </div>
       </Reveal>
 
       <Reveal delay={40}>
         <div className="card" style={{ maxWidth: 640 }}>
-          <h2 className="card-title">Generate a Link</h2>
+          <h2 className="card-title">New Survey</h2>
           <form onSubmit={handleSubmit} className="form-grid">
             <label>Client's Survey Link
               <input
@@ -156,29 +191,46 @@ export default function LinkGenerator() {
                 placeholder="e.g. euwfgwehfvehfvejfv"
               />
             </label>
-            <label>Sting
-              <input
-                required
-                value={form.sting}
-                onChange={(e) => setForm({ ...form, sting: e.target.value })}
-                placeholder="e.g. AS01"
+            <label>Project ID
+              <input required value={form.project_id} onChange={(e) => setForm({ ...form, project_id: e.target.value })} />
+            </label>
+            <label>Project Name
+              <input required value={form.project_name} onChange={(e) => setForm({ ...form, project_name: e.target.value })} />
+            </label>
+            <label style={{ gridColumn: '1 / -1' }}>Description
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Brief background on this survey — target audience, objective, and so on."
+                rows={3}
               />
             </label>
-            <label>Project / Client Note (optional)
-              <input
-                value={form.project_note}
-                onChange={(e) => setForm({ ...form, project_note: e.target.value })}
-                placeholder="For your own reference in the list below"
-              />
+            <label>Country
+              <input required value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
+            </label>
+            <label>Req Completes
+              <input type="number" value={form.req_completes} onChange={(e) => setForm({ ...form, req_completes: e.target.value })} />
+            </label>
+            <label>Max Completes
+              <input type="number" value={form.max_completes} onChange={(e) => setForm({ ...form, max_completes: e.target.value })} placeholder="Defaults to Req Completes if left blank" />
+            </label>
+            <label>LOI (min)
+              <input type="number" value={form.loi} onChange={(e) => setForm({ ...form, loi: e.target.value })} />
+            </label>
+            <label>IR (%)
+              <input type="number" value={form.ir} onChange={(e) => setForm({ ...form, ir: e.target.value })} />
+            </label>
+            <label>Launch Date
+              <input type="date" value={form.launch_date} onChange={(e) => setForm({ ...form, launch_date: e.target.value })} />
             </label>
             {message && <div className={message.type === 'error' ? 'auth-error' : 'auth-success'}>{message.text}</div>}
-            <button className="btn-primary" type="submit" disabled={busy}>{busy ? 'Generating…' : 'Generate Link'}</button>
+            <button className="btn-primary" type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create Survey'}</button>
           </form>
 
           {result && (
             <div style={{ marginTop: 18, padding: 14, borderRadius: 10, background: 'rgba(124, 92, 252, 0.08)', border: '1px solid rgba(124, 92, 252, 0.25)' }}>
               <div className="card-hint" style={{ marginBottom: 6 }}>
-                Client-facing ID: <code>{result.client_facing_id}</code> — internally logged as <code>{result.raw_uid}{result.sting}</code>
+                Survey created. Client-facing ID: <code>{result.client_facing_id}</code>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                 <code style={{ wordBreak: 'break-all', fontSize: 12 }}>{result.final_link}</code>
@@ -187,7 +239,7 @@ export default function LinkGenerator() {
                 </button>
               </div>
               <div className="card-hint" style={{ marginTop: 8 }}>
-                Copy this link and paste it into the project's Survey Link field when you create or edit the project.
+                This is already saved as the project's Survey Link — nothing else to do.
               </div>
             </div>
           )}
@@ -197,33 +249,31 @@ export default function LinkGenerator() {
       <Reveal delay={80}>
         <div className="card">
           <div className="card-title">
-            {canAccessOpsPages ? 'Recent Links' : 'Your Recent Links'}
+            {canAccessOpsPages ? 'Recently Generated' : 'Your Recently Generated'}
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th>Project</th>
                   <th>Client-facing ID</th>
                   {canAccessOpsPages && <th>Raw UID</th>}
-                  <th>Sting</th>
-                  <th>Note</th>
                   {canAccessOpsPages && <th>By</th>}
                   <th>When</th>
                 </tr>
               </thead>
               <tbody>
                 {entriesLoading && (
-                  <tr><td colSpan={canAccessOpsPages ? 6 : 4} className="page-loading">Loading…</td></tr>
+                  <tr><td colSpan={canAccessOpsPages ? 5 : 3} className="page-loading">Loading…</td></tr>
                 )}
                 {!entriesLoading && entries.length === 0 && (
-                  <tr><td colSpan={canAccessOpsPages ? 6 : 4} className="card-hint">No links generated yet.</td></tr>
+                  <tr><td colSpan={canAccessOpsPages ? 5 : 3} className="card-hint">No surveys created yet.</td></tr>
                 )}
                 {!entriesLoading && entries.map((e) => (
                   <tr key={e.id}>
+                    <td>{e.project_id}</td>
                     <td>{e.client_facing_id}</td>
                     {canAccessOpsPages && <td>{e.raw_uid}</td>}
-                    <td>{e.sting}</td>
-                    <td>{e.project_note || '—'}</td>
                     {canAccessOpsPages && <td>{e.profiles?.full_name || e.profiles?.email || '—'}</td>}
                     <td>{new Date(e.created_at).toLocaleString()}</td>
                   </tr>
