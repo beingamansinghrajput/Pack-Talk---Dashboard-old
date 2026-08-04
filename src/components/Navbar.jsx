@@ -39,6 +39,7 @@ export default function Navbar() {
           <Link className={isActive('/upload') ? 'active' : ''} to="/upload">Punch In Data</Link>
         )}
         <Link className={isActive('/earnings') ? 'active' : ''} to="/earnings">Earnings</Link>
+        <Link className={isActive('/link-generator') ? 'active' : ''} to="/link-generator">Link Generator</Link>
         {canAccessOpsPages && (
           <Link className={isActive('/projects') ? 'active' : ''} to="/projects">Manage Projects</Link>
         )}
