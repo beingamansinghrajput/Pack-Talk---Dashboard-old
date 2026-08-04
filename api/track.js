@@ -73,7 +73,7 @@ function confirmationHtml({ project, uid, ip, statusLabel, finalStatusKey, isDup
     <body>
       <div class="card">
         <h1>Response Recorded</h1>
-        <div class="meta">Project: ${project}</div>
+        <div class="meta">Project: ${escapeHtml(project)}</div>
         ${isDuplicateIp ? `<div class="dupe-note">This IP address already submitted a response for this project. Automatically marked Terminated.</div>` : ''}
         <table>
           <thead>
@@ -81,9 +81,9 @@ function confirmationHtml({ project, uid, ip, statusLabel, finalStatusKey, isDup
           </thead>
           <tbody>
             <tr>
-              <td>${uid}</td>
-              <td>${ip}</td>
-              <td><span class="status-badge ${finalStatusKey === 'terminate' || finalStatusKey === 'security' ? 'term' : finalStatusKey === 'quotafull' ? 'qf' : ''}">${statusLabel}</span></td>
+              <td>${escapeHtml(uid)}</td>
+              <td>${escapeHtml(ip)}</td>
+              <td><span class="status-badge ${finalStatusKey === 'terminate' || finalStatusKey === 'security' ? 'term' : finalStatusKey === 'quotafull' ? 'qf' : ''}">${escapeHtml(statusLabel)}</span></td>
             </tr>
           </tbody>
         </table>
@@ -289,38 +289,43 @@ function notRegisteredHtml() {
 export default async function handler(req, res) {
   const { status } = req.query
   const uid = req.query.assignUid || req.query.uid
+  let { project, country, age_band } = req.query
 
   if (!uid || !status) {
     return res.status(400).send('Missing required parameters: link is missing its status or assignUid.')
   }
 
-  const mapping = STATUS_MAP[status.toLowerCase()]
-  if (!mapping) {
+  const mapping0 = STATUS_MAP[status.toLowerCase()]
+  if (!mapping0) {
     return res.status(400).send('Invalid status. Use: complete, terminate, quotafull, or security')
   }
+  let mapping = mapping0
 
-  // The global tracking links carry no project info — resolve it from the
-  // registry the client populated via POST /api/register-respondent.
-  const { data: regRows, error: regError } = await supabase
-    .from('respondent_registry')
-    .select('project_id, country, age_band')
-    .eq('uid', uid)
-    .order('registered_at', { ascending: false })
-    .limit(1)
+  // If no project was given directly in the URL (the query-param links
+  // always include it), fall back to the respondent registry — the client
+  // must have called POST /api/register-respondent for this uid first.
+  if (!project) {
+    const { data: regRows, error: regError } = await supabase
+      .from('respondent_registry')
+      .select('project_id, country, age_band')
+      .eq('uid', uid)
+      .order('registered_at', { ascending: false })
+      .limit(1)
 
-  if (regError) {
-    return res.status(500).send('Error looking up respondent registration: ' + regError.message)
+    if (regError) {
+      return res.status(500).send('Error looking up respondent registration: ' + regError.message)
+    }
+
+    const registration = regRows && regRows[0]
+    if (!registration || !registration.project_id) {
+      res.setHeader('Content-Type', 'text/html')
+      return res.status(400).send(notRegisteredHtml())
+    }
+
+    project = registration.project_id
+    country = registration.country || null
+    age_band = registration.age_band || null
   }
-
-  const registration = regRows && regRows[0]
-  if (!registration || !registration.project_id) {
-    res.setHeader('Content-Type', 'text/html')
-    return res.status(400).send(notRegisteredHtml())
-  }
-
-  const project = registration.project_id
-  const country = registration.country || null
-  const age_band = registration.age_band || null
 
   const forwarded = req.headers['x-forwarded-for']
   const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket?.remoteAddress || 'unknown'
@@ -398,8 +403,9 @@ export default async function handler(req, res) {
     }
   }
 
-  // Mark the registration as consumed so admins can see which have been used.
-  supabase.from('respondent_registry').update({ status: 'consumed' }).eq('uid', uid).then(() => {})
+  // If this hit came through the respondent registry, mark it consumed so
+  // admins can see which registrations have actually been used.
+  supabase.from('respondent_registry').update({ status: 'consumed' }).eq('uid', uid).eq('project_id', project).then(() => {})
 
   let clientRedirectTemplate = null
   if (country) {
@@ -428,4 +434,8 @@ export default async function handler(req, res) {
     complete: 'Completed',
     terminate: 'Terminated',
     quotafull: 'Quota Full',
-    security
+    security: 'Security Terminated',
+  }[finalStatusKey]
+
+  return res.status(200).send(confirmationHtml({ project, uid, ip, statusLabel, finalStatusKey, isDuplicateIp, redirectUrl }))
+}
