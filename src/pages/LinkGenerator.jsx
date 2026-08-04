@@ -3,9 +3,10 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import Reveal from '../components/Reveal'
 
+const ENTRY_BASE = 'https://pack-talk-dashboard.vercel.app/api/enter'
+
 const EMPTY = {
   client_link: '',
-  raw_uid: '',
   project_id: '',
   project_name: '',
   description: '',
@@ -17,29 +18,10 @@ const EMPTY = {
   launch_date: '',
 }
 
-function randomClientFacingId() {
-  // 15-digit random numeric string, first digit non-zero
-  let out = String(Math.floor(Math.random() * 9) + 1)
-  for (let i = 0; i < 14; i++) {
-    out += String(Math.floor(Math.random() * 10))
-  }
-  return out
-}
-
-function buildFinalLink(template, clientFacingId) {
-  try {
-    const url = new URL(template)
-    url.searchParams.set('uid', clientFacingId)
-    return url.toString()
-  } catch {
-    // Template isn't a full valid URL on its own — fall back to a
-    // straightforward text replace on the uid= param.
-    if (/[?&]uid=/.test(template)) {
-      return template.replace(/([?&]uid=)[^&]*/, `$1${clientFacingId}`)
-    }
-    const sep = template.includes('?') ? '&' : '?'
-    return `${template}${sep}uid=${clientFacingId}`
-  }
+function generateEntryToken() {
+  const bytes = new Uint8Array(9)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 export default function LinkGenerator() {
@@ -51,37 +33,38 @@ export default function LinkGenerator() {
   const [result, setResult] = useState(null)
   const [copied, setCopied] = useState(false)
 
-  const [entries, setEntries] = useState([])
-  const [entriesLoading, setEntriesLoading] = useState(false)
+  const [projects, setProjects] = useState([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [copiedRowId, setCopiedRowId] = useState(null)
 
   useEffect(() => {
-    loadEntries()
+    loadProjects()
   }, [])
 
-  async function loadEntries() {
-    setEntriesLoading(true)
+  async function loadProjects() {
+    setProjectsLoading(true)
     let q = supabase
-      .from('client_link_entries')
-      .select('id, client_facing_id, raw_uid, project_id, created_at, created_by, profiles:created_by(full_name, email)')
+      .from('projects')
+      .select('id, project_id, project_name, country, survey_link, entry_token, created_at, created_by, profiles:created_by(full_name, email)')
       .order('created_at', { ascending: false })
       .limit(50)
     if (!canAccessOpsPages) q = q.eq('created_by', user.id)
     const { data } = await q
-    setEntries(data || [])
-    setEntriesLoading(false)
+    setProjects(data || [])
+    setProjectsLoading(false)
   }
 
-  async function getUniqueClientFacingId() {
+  async function getUniqueEntryToken() {
     for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = randomClientFacingId()
+      const candidate = generateEntryToken()
       const { data } = await supabase
-        .from('client_link_entries')
+        .from('projects')
         .select('id')
-        .eq('client_facing_id', candidate)
+        .eq('entry_token', candidate)
         .maybeSingle()
       if (!data) return candidate
     }
-    throw new Error('Could not generate a unique ID — try again.')
+    throw new Error('Could not generate a unique entry link — try again.')
   }
 
   async function handleSubmit(e) {
@@ -90,14 +73,9 @@ export default function LinkGenerator() {
     setResult(null)
 
     const clientLink = form.client_link.trim()
-    const rawUid = form.raw_uid.trim()
 
     if (!clientLink) {
-      setMessage({ type: 'error', text: "Paste the client's survey link first." })
-      return
-    }
-    if (!rawUid) {
-      setMessage({ type: 'error', text: 'Enter the UID / random letters.' })
+      setMessage({ type: 'error', text: "Paste the client's survey link first, exactly as they gave it to you (including their uid placeholder)." })
       return
     }
     if (!form.project_id.trim() || !form.project_name.trim() || !form.country.trim()) {
@@ -107,8 +85,7 @@ export default function LinkGenerator() {
 
     setBusy(true)
     try {
-      const clientFacingId = await getUniqueClientFacingId()
-      const finalLink = buildFinalLink(clientLink, clientFacingId)
+      const entryToken = await getUniqueEntryToken()
 
       const { data: project, error: projectError } = await supabase
         .from('projects')
@@ -122,7 +99,12 @@ export default function LinkGenerator() {
           loi: Number(form.loi) || 0,
           ir: Number(form.ir) || 0,
           launch_date: form.launch_date || new Date().toISOString().slice(0, 10),
-          survey_link: finalLink,
+          // Saved exactly as the client gave it — including their own uid
+          // placeholder. Nothing is substituted here; a fresh ID gets
+          // generated per real respondent at click-through time instead,
+          // by api/enter/[token].js.
+          survey_link: clientLink,
+          entry_token: entryToken,
           created_by: user.id,
         })
         .select()
@@ -130,34 +112,30 @@ export default function LinkGenerator() {
 
       if (projectError) throw projectError
 
-      const { data: entry, error: entryError } = await supabase
-        .from('client_link_entries')
-        .insert({
-          project_id: project.project_id,
-          raw_uid: rawUid,
-          client_facing_id: clientFacingId,
-          final_link: finalLink,
-          created_by: user.id,
-        })
-        .select()
-        .single()
-
-      if (entryError) throw entryError
-
-      setResult(entry)
+      setResult(project)
       setForm(EMPTY)
-      loadEntries()
+      loadProjects()
     } catch (err) {
       setMessage({ type: 'error', text: err.message })
     }
     setBusy(false)
   }
 
+  function entryLinkFor(entry_token) {
+    return `${ENTRY_BASE}/${entry_token}`
+  }
+
   function copyResult() {
     if (!result) return
-    navigator.clipboard.writeText(result.final_link)
+    navigator.clipboard.writeText(entryLinkFor(result.entry_token))
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
+  }
+
+  function copyRowLink(id, entry_token) {
+    navigator.clipboard.writeText(entryLinkFor(entry_token))
+    setCopiedRowId(id)
+    setTimeout(() => setCopiedRowId(null), 1500)
   }
 
   return (
@@ -166,7 +144,11 @@ export default function LinkGenerator() {
         <div className="page-header">
           <div>
             <h1>Link Generator</h1>
-            <p className="page-sub">Add a new survey using the client's link — the client only ever sees a random ID, never the raw UID.</p>
+            <p className="page-sub">
+              Add a new survey using the client's link. Post the resulting entry link to our own panel — every respondent
+              who clicks it gets their own fresh, random ID automatically, and the link itself never reveals our internal
+              Project ID.
+            </p>
           </div>
         </div>
       </Reveal>
@@ -183,14 +165,10 @@ export default function LinkGenerator() {
                 placeholder="https://client-domain.com/survey?p=...&uid=xxxx"
               />
             </label>
-            <label>UID / Random Letters
-              <input
-                required
-                value={form.raw_uid}
-                onChange={(e) => setForm({ ...form, raw_uid: e.target.value })}
-                placeholder="e.g. euwfgwehfvehfvejfv"
-              />
-            </label>
+            <p className="card-hint" style={{ gridColumn: '1 / -1', marginTop: -6 }}>
+              Paste it exactly as the client sent it, including their own uid placeholder (e.g. <code>xxxx</code>) — don't
+              replace it with anything, our system fills in a real one per respondent automatically later.
+            </p>
             <label>Project ID
               <input required value={form.project_id} onChange={(e) => setForm({ ...form, project_id: e.target.value })} />
             </label>
@@ -230,16 +208,17 @@ export default function LinkGenerator() {
           {result && (
             <div style={{ marginTop: 18, padding: 14, borderRadius: 10, background: 'rgba(124, 92, 252, 0.08)', border: '1px solid rgba(124, 92, 252, 0.25)' }}>
               <div className="card-hint" style={{ marginBottom: 6 }}>
-                Survey created. Client-facing ID: <code>{result.client_facing_id}</code>
+                Survey created. Post this link to our own panel — it's stable and reusable, the same one for every respondent:
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <code style={{ wordBreak: 'break-all', fontSize: 12 }}>{result.final_link}</code>
+                <code style={{ wordBreak: 'break-all', fontSize: 12 }}>{entryLinkFor(result.entry_token)}</code>
                 <button className="btn-ghost" onClick={copyResult} type="button">
                   {copied ? 'Copied ✓' : 'Copy'}
                 </button>
               </div>
               <div className="card-hint" style={{ marginTop: 8 }}>
-                This is already saved as the project's Survey Link — nothing else to do.
+                Each person who clicks it gets sent to the client's real survey with their own fresh, randomly generated ID —
+                you never need to generate or handle that number yourself, and the link never reveals the Project ID.
               </div>
             </div>
           )}
@@ -249,33 +228,44 @@ export default function LinkGenerator() {
       <Reveal delay={80}>
         <div className="card">
           <div className="card-title">
-            {canAccessOpsPages ? 'Recently Generated' : 'Your Recently Generated'}
+            {canAccessOpsPages ? 'Recently Generated Surveys' : 'Your Recently Generated Surveys'}
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Project</th>
-                  <th>Client-facing ID</th>
-                  {canAccessOpsPages && <th>Raw UID</th>}
+                  <th>Country</th>
+                  <th>Entry Link (for our panel)</th>
                   {canAccessOpsPages && <th>By</th>}
                   <th>When</th>
                 </tr>
               </thead>
               <tbody>
-                {entriesLoading && (
-                  <tr><td colSpan={canAccessOpsPages ? 5 : 3} className="page-loading">Loading…</td></tr>
+                {projectsLoading && (
+                  <tr><td colSpan={canAccessOpsPages ? 5 : 4} className="page-loading">Loading…</td></tr>
                 )}
-                {!entriesLoading && entries.length === 0 && (
-                  <tr><td colSpan={canAccessOpsPages ? 5 : 3} className="card-hint">No surveys created yet.</td></tr>
+                {!projectsLoading && projects.length === 0 && (
+                  <tr><td colSpan={canAccessOpsPages ? 5 : 4} className="card-hint">No surveys created yet.</td></tr>
                 )}
-                {!entriesLoading && entries.map((e) => (
-                  <tr key={e.id}>
-                    <td>{e.project_id}</td>
-                    <td>{e.client_facing_id}</td>
-                    {canAccessOpsPages && <td>{e.raw_uid}</td>}
-                    {canAccessOpsPages && <td>{e.profiles?.full_name || e.profiles?.email || '—'}</td>}
-                    <td>{new Date(e.created_at).toLocaleString()}</td>
+                {!projectsLoading && projects.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.project_id} — {p.project_name}</td>
+                    <td>{p.country}</td>
+                    <td>
+                      {p.entry_token ? (
+                        <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                          <code style={{ fontSize: 12 }}>{entryLinkFor(p.entry_token)}</code>
+                          <button className="btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => copyRowLink(p.id, p.entry_token)} type="button">
+                            {copiedRowId === p.id ? 'Copied ✓' : 'Copy'}
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="card-hint">No entry link (created before this feature)</span>
+                      )}
+                    </td>
+                    {canAccessOpsPages && <td>{p.profiles?.full_name || p.profiles?.email || '—'}</td>}
+                    <td>{new Date(p.created_at).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
