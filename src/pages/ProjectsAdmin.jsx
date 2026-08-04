@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import Reveal from '../components/Reveal'
 
-const EMPTY = { project_id: '', project_name: '', description: '', target: '', loi: '', ir: '', country: '', launch_date: '', survey_link: '' }
+const EMPTY = { project_id: '', project_name: '', description: '', req_completes: '', max_completes: '', loi: '', ir: '', country: '', launch_date: '', survey_link: '' }
 const TRACK_BASE = 'https://pack-talk-dashboard.vercel.app/api/track'
 const REGISTER_BASE = 'https://pack-talk-dashboard.vercel.app/api/register-respondent'
 
@@ -114,7 +114,8 @@ export default function ProjectsAdmin() {
     setMessage(null)
     const { error } = await supabase.from('projects').insert({
       ...form,
-      target: Number(form.target) || 0,
+      req_completes: Number(form.req_completes) || 0,
+      max_completes: Number(form.max_completes) || Number(form.req_completes) || 0,
       loi: Number(form.loi) || 0,
       ir: Number(form.ir) || 0,
       launch_date: form.launch_date || new Date().toISOString().slice(0, 10),
@@ -527,8 +528,11 @@ export default function ProjectsAdmin() {
             <label>Country
               <input required value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
             </label>
-            <label>Target
-              <input type="number" value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })} />
+            <label>Req Completes
+              <input type="number" value={form.req_completes} onChange={(e) => setForm({ ...form, req_completes: e.target.value })} />
+            </label>
+            <label>Max Completes
+              <input type="number" value={form.max_completes} onChange={(e) => setForm({ ...form, max_completes: e.target.value })} placeholder="Defaults to Req Completes if left blank" />
             </label>
             <label>LOI (min)
               <input type="number" value={form.loi} onChange={(e) => setForm({ ...form, loi: e.target.value })} />
@@ -562,18 +566,29 @@ export default function ProjectsAdmin() {
           <div className="table-wrap">
             <table className="data-table">
               <thead>
-                <tr><th>Project ID</th><th>Name</th><th>Country</th><th>Target</th><th>Hits</th><th>Completes</th><th>Drops</th><th>QF</th><th>IR%</th><th>Status</th><th>Teams</th><th></th></tr>
+                <tr><th>Project ID</th><th>Name</th><th>Country</th><th>Req / Max</th><th>Hits</th><th>Completes</th><th>Drops</th><th>QF</th><th>IR%</th><th>Status</th><th>Teams</th><th></th></tr>
               </thead>
               <tbody>
                 {filteredProjects.map((p) => {
                   const linkedTeamIds = teamProjects.filter((tp) => tp.project_id === p.project_id).map((tp) => tp.team_id)
                   const stats = getProjectStats(p.project_id)
+                  const reqCompletes = p.req_completes ?? p.target ?? null
+                  const maxCompletes = p.max_completes ?? p.target ?? null
+                  const atMax = maxCompletes != null && stats.completes >= maxCompletes
+                  const atReq = reqCompletes != null && stats.completes >= reqCompletes
                   return (
                     <tr key={p.project_id}>
                       <td>{p.project_id}</td>
                       <td>{p.project_name}</td>
                       <td>{p.country}</td>
-                      <td>{p.target}</td>
+                      <td>
+                        <span
+                          className={`badge ${atMax ? 'badge-green' : atReq ? 'badge-gray' : 'badge-gray'}`}
+                          title={atMax ? 'Hit max completes' : atReq ? 'Hit req completes, still below max' : 'Below req completes'}
+                        >
+                          {reqCompletes ?? '—'} / {maxCompletes ?? '—'}
+                        </span>
+                      </td>
                       <td>{stats.hits}</td>
                       <td>{stats.completes}</td>
                       <td>{stats.drops}</td>
