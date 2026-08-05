@@ -352,9 +352,25 @@ export default async function handler(req, res) {
   }
   let mapping = mapping0
 
-  // If no project was given directly in the URL (the query-param links
-  // always include it), fall back to the respondent registry — the client
-  // must have called POST /api/register-respondent for this uid first.
+  let startTime = new Date().toISOString()
+
+  // 1. Unconditionally check client_link_entries to map the opaque client_facing_id 
+  // back to the original UID and fetch the true start time.
+  const { data: cleRows } = await supabase
+    .from('client_link_entries')
+    .select('project_id, original_uid, created_at')
+    .eq('client_facing_id', uid)
+    .limit(1)
+
+  const cleEntry = cleRows && cleRows[0]
+  if (cleEntry) {
+    if (!project) project = cleEntry.project_id
+    if (cleEntry.original_uid) uid = cleEntry.original_uid
+    if (cleEntry.created_at) startTime = cleEntry.created_at
+  }
+
+  // 2. If no project was found (either directly in URL or via entry link),
+  // fall back to the respondent registry API.
   if (!project) {
     const { data: regRows, error: regError } = await supabase
       .from('respondent_registry')
@@ -373,25 +389,8 @@ export default async function handler(req, res) {
       country = registration.country || null
       age_band = registration.age_band || null
     } else {
-      // Fallback: check if they came through a Panel Entry Link
-      const { data: cleRows } = await supabase
-        .from('client_link_entries')
-        .select('project_id, original_uid')
-        .eq('client_facing_id', uid)
-        .limit(1)
-        
-      const cleEntry = cleRows && cleRows[0]
-      if (cleEntry && cleEntry.project_id) {
-        project = cleEntry.project_id
-        if (cleEntry.original_uid) {
-          uid = cleEntry.original_uid
-        }
-        country = null
-        age_band = null
-      } else {
-        res.setHeader('Content-Type', 'text/html')
-        return res.status(400).send(notRegisteredHtml())
-      }
+      res.setHeader('Content-Type', 'text/html')
+      return res.status(400).send(notRegisteredHtml())
     }
   }
 
@@ -418,7 +417,7 @@ export default async function handler(req, res) {
   const responseData = {
     project_id: project,
     uid: uid,
-    start_time: now,
+    start_time: startTime,
     end_time: now,
     screener_pass: mapping.screener_pass,
     quota_status: mapping.quota_status,
