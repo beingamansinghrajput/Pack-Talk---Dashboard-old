@@ -350,32 +350,40 @@ export default function ProjectDetail() {
         </Reveal>
       )}
 
-      {project && (project.survey_link || quotas.length > 0) && (
+      {project && (project.entry_token || quotas.length > 0) && (
         <Reveal>
         <div className="card">
-          <h2 className="card-title">Client Survey Link{quotas.length > 1 ? 's' : ''}</h2>
+          <h2 className="card-title">Panel Entry Link{quotas.length > 1 ? 's' : ''}</h2>
           <p className="card-hint">
-            The link(s) the client provided for this survey. Copy the one you need and run it through GoLogin to test.
+            This is the link to post to your own panel — every respondent who clicks it gets a fresh, random ID
+            automatically and is sent into the client's real survey. It never reveals the client's domain or our
+            internal Project ID.
           </p>
 
-          {project.survey_link && (
+          {project.entry_token && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-              <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>Main Link</span>
+              <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>Entry Link</span>
               <input
                 readOnly
-                value={project.survey_link}
+                value={`https://pack-talk-dashboard.vercel.app/api/enter/${project.entry_token}`}
                 onFocus={(e) => e.target.select()}
                 style={{ flex: 1, minWidth: 260, fontFamily: 'monospace', fontSize: 12 }}
               />
-              <button type="button" className="btn-ghost" onClick={() => copyLink('main', project.survey_link)}>
+              <button type="button" className="btn-ghost" onClick={() => copyLink('main', `https://pack-talk-dashboard.vercel.app/api/enter/${project.entry_token}`)}>
                 {copiedLinkKey === 'main' ? 'Copied ✓' : 'Copy'}
               </button>
-              <a href={project.survey_link} target="_blank" rel="noreferrer" className="btn-ghost">Open</a>
             </div>
           )}
 
+          {!project.entry_token && (
+            <p className="card-hint" style={{ marginTop: 12 }}>
+              No entry link exists for this project yet — it was created before this feature, or via the old Manage
+              Projects form. Generate one from the Link Generator page.
+            </p>
+          )}
+
           {quotas.length > 0 && (
-            <div className="table-wrap" style={{ marginTop: project.survey_link ? 16 : 12 }}>
+            <div className="table-wrap" style={{ marginTop: project.entry_token ? 16 : 12 }}>
               <table className="data-table small">
                 <thead>
                   <tr><th>Country</th><th>Age Band</th><th>Target</th><th>Survey URL</th><th></th></tr>
