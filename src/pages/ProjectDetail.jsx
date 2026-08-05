@@ -365,11 +365,11 @@ export default function ProjectDetail() {
               <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>Entry Link</span>
               <input
                 readOnly
-                value={`https://pack-talk-dashboard.vercel.app/api/enter/${project.entry_token}`}
+                value={`https://pack-talk-dashboard.vercel.app/api/enter?p=${project.entry_token}&uid=xxxx`}
                 onFocus={(e) => e.target.select()}
                 style={{ flex: 1, minWidth: 260, fontFamily: 'monospace', fontSize: 12 }}
               />
-              <button type="button" className="btn-ghost" onClick={() => copyLink('main', `https://pack-talk-dashboard.vercel.app/api/enter/${project.entry_token}`)}>
+              <button type="button" className="btn-ghost" onClick={() => copyLink('main', `https://pack-talk-dashboard.vercel.app/api/enter?p=${project.entry_token}&uid=xxxx`)}>
                 {copiedLinkKey === 'main' ? 'Copied ✓' : 'Copy'}
               </button>
             </div>
