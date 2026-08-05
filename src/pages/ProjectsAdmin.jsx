@@ -1,852 +1,588 @@
 import { useEffect, useMemo, useState } from 'react'
-import * as XLSX from 'xlsx'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import Reveal from '../components/Reveal'
 
-const EMPTY = { project_id: '', project_name: '', description: '', req_completes: '', max_completes: '', loi: '', ir: '', country: '', launch_date: '', survey_link: '' }
-const TRACK_BASE = 'https://pack-talk-dashboard.vercel.app/api/track'
-const REGISTER_BASE = 'https://pack-talk-dashboard.vercel.app/api/register-respondent'
+const STATUS_CLASS = {
+  Completed: 'badge-green',
+  Terminated: 'badge-red',
+  QuotaFull: 'badge-amber',
+  Disqualify: 'badge-gray',
+}
+const PAGE_SIZE = 15
+const IR_MIN_SAMPLE = 5
+const IR_GOOD_THRESHOLD = 10
+const IR_WARN_THRESHOLD = 20
 
-const GLOBAL_TRACKING_LINKS = [
-  { label: 'Complete', status: 'complete', url: `${TRACK_BASE}?status=complete&assignUid=RESPONDENT_ID` },
-  { label: 'Terminate', status: 'terminate', url: `${TRACK_BASE}?status=terminate&assignUid=RESPONDENT_ID` },
-  { label: 'Quota Full', status: 'quotafull', url: `${TRACK_BASE}?status=quotafull&assignUid=RESPONDENT_ID` },
-  { label: 'Security', status: 'security', url: `${TRACK_BASE}?status=security&assignUid=RESPONDENT_ID` },
-]
+function getIRHealth(expectedIR, completedCount, terminatedCount) {
+  const sample = completedCount + terminatedCount
+  if (sample < IR_MIN_SAMPLE) {
+    return { status: 'insufficient', label: 'Insufficient data yet', color: '#6B7280', actualIR: null, sample }
+  }
+  const actualIR = (completedCount / sample) * 100
+  const diff = Math.abs(actualIR - expectedIR)
 
-function generateApiKey() {
-  const bytes = new Uint8Array(16)
-  crypto.getRandomValues(bytes)
-  return 'pk_' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  if (diff <= IR_GOOD_THRESHOLD) {
+    return { status: 'good', label: 'On target', color: '#16A34A', actualIR, sample }
+  }
+  if (diff <= IR_WARN_THRESHOLD) {
+    return { status: 'warn', label: 'Watch closely', color: '#D97706', actualIR, sample }
+  }
+  return { status: 'bad', label: 'Off target', color: '#DC2626', actualIR, sample }
 }
 
-function generateToken() {
-  const bytes = new Uint8Array(12)
-  crypto.getRandomValues(bytes)
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
+export default function ProjectDetail() {
+  const { projectId } = useParams()
+  const navigate = useNavigate()
+  const { isAdmin } = useAuth()
+  const [project, setProject] = useState(null)
+  const [quotas, setQuotas] = useState([])
+  const [copiedLinkKey, setCopiedLinkKey] = useState(null)
+  const [rows, setRows] = useState([])
+  const [page, setPage] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [actionMessage, setActionMessage] = useState(null)
 
-function getClientLinkUrls(token) {
-  // {uid} stays LITERAL — the client's platform substitutes it per respondent.
-  // The token in the path is the real, already-generated {id} value.
-  return [
-    { label: 'Complete', status: 'complete', url: `${TRACK_BASE}/${token}/complete?uid={uid}` },
-    { label: 'Terminate', status: 'terminate', url: `${TRACK_BASE}/${token}/terminate?uid={uid}` },
-    { label: 'Quota Full', status: 'quotafull', url: `${TRACK_BASE}/${token}/quotafull?uid={uid}` },
-    { label: 'Security', status: 'security', url: `${TRACK_BASE}/${token}/security?uid={uid}` },
-  ]
-}
+  const [statusFilter, setStatusFilter] = useState('')
+  const [countryFilter, setCountryFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
-export default function ProjectsAdmin() {
-  const { user, isAdmin } = useAuth()
-  const [projects, setProjects] = useState([])
-  const [teams, setTeams] = useState([])
-  const [teamProjects, setTeamProjects] = useState([])
-  const [members, setMembers] = useState([])
-  const [rates, setRates] = useState([])
-  const [form, setForm] = useState(EMPTY)
-  const [message, setMessage] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [ratesProjectId, setRatesProjectId] = useState(null)
-  const [linksProjectId, setLinksProjectId] = useState(null)
-  const [copiedKey, setCopiedKey] = useState(null)
-  const [search, setSearch] = useState('')
+  const [irCounts, setIrCounts] = useState({ Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 })
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
 
-  const [apiKeys, setApiKeys] = useState([])
-  const [newKeyLabel, setNewKeyLabel] = useState('')
-  const [apiKeyBusy, setApiKeyBusy] = useState(false)
-  const [apiKeyMessage, setApiKeyMessage] = useState(null)
-  const [justCreatedKey, setJustCreatedKey] = useState(null)
+  const [clearConfirmText, setClearConfirmText] = useState('')
+  const [clearBusy, setClearBusy] = useState(false)
 
-  const [quotaFile, setQuotaFile] = useState(null)
-  const [quotaPreview, setQuotaPreview] = useState([])
-  const [quotaError, setQuotaError] = useState(null)
-  const [quotaProjectId, setQuotaProjectId] = useState('')
-  const [quotaMessage, setQuotaMessage] = useState(null)
-  const [quotaBusy, setQuotaBusy] = useState(false)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
-  const [allQuotas, setAllQuotas] = useState([])
+  useEffect(() => {
+    setPage(0)
+  }, [statusFilter, countryFilter, dateFrom, dateTo])
 
-  const [responseStats, setResponseStats] = useState([])
+  useEffect(() => {
+    load()
+  }, [projectId, page, statusFilter, countryFilter, dateFrom, dateTo])
 
-  const [surveyLinks, setSurveyLinks] = useState([])
-  const [genCountry, setGenCountry] = useState('')
-  const [genAgeBand, setGenAgeBand] = useState('')
-  const [genBusy, setGenBusy] = useState(false)
-  const [genMessage, setGenMessage] = useState(null)
+  useEffect(() => {
+    setSelectedIds(new Set())
+  }, [page, statusFilter, countryFilter, dateFrom, dateTo, projectId])
 
-  useEffect(() => { load() }, [])
-
-  async function load() {
-    const [{ data: projectData }, { data: teamData }, { data: tpData }, { data: memberData }, { data: rateData }, { data: quotaData }, { data: linksData }, { data: responseStatsRaw }] = await Promise.all([
-      supabase.from('projects').select('*').order('created_at', { ascending: false }),
-      supabase.from('teams').select('*').order('name'),
-      supabase.from('team_projects').select('*'),
-      supabase.from('profiles').select('*'),
-      supabase.from('rates').select('*'),
-      supabase.from('project_quotas').select('*'),
-      supabase.from('survey_links').select('*').order('created_at', { ascending: false }),
-      supabase.from('responses').select('project_id, completed, quota_status'),
-    ])
-    setProjects(projectData || [])
-    setTeams(teamData || [])
-    setTeamProjects(tpData || [])
-    setMembers(memberData || [])
-    setRates(rateData || [])
-    setAllQuotas(quotaData || [])
-    setSurveyLinks(linksData || [])
-    setResponseStats(responseStatsRaw || [])
-    if (!quotaProjectId && projectData && projectData.length > 0) {
-      setQuotaProjectId(projectData[0].project_id)
-    }
-    if (isAdmin) {
-      const { data: keyData } = await supabase.from('api_keys').select('*').order('created_at', { ascending: false })
-      setApiKeys(keyData || [])
-    } else {
-      setApiKeys([])
-    }
+  function buildQuery(base) {
+    let q = base.eq('project_id', projectId).eq('deleted', false)
+    if (statusFilter) q = q.eq('status', statusFilter)
+    if (countryFilter.trim()) q = q.ilike('country', `%${countryFilter.trim()}%`)
+    if (dateFrom) q = q.gte('start_time', dateFrom)
+    if (dateTo) q = q.lte('start_time', dateTo + 'T23:59:59')
+    return q
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault()
-    setBusy(true)
-    setMessage(null)
-    const { error } = await supabase.from('projects').insert({
-      ...form,
-      req_completes: Number(form.req_completes) || 0,
-      max_completes: Number(form.max_completes) || Number(form.req_completes) || 0,
-      loi: Number(form.loi) || 0,
-      ir: Number(form.ir) || 0,
-      launch_date: form.launch_date || new Date().toISOString().slice(0, 10),
-      survey_link: form.survey_link || null,
-      created_by: user.id,
-    })
-    setBusy(false)
+  async function load() {
+    setLoading(true)
+    const { data: proj } = await supabase.from('projects').select('*').eq('project_id', projectId).single()
+    setProject(proj)
+
+    const { data: quotaData } = await supabase.from('project_quotas').select('*').eq('project_id', projectId).order('country')
+    setQuotas(quotaData || [])
+
+    const from = page * PAGE_SIZE
+    const to = from + PAGE_SIZE - 1
+
+    const query = buildQuery(supabase.from('responses').select('*', { count: 'exact' }))
+      .order('start_time', { ascending: false })
+      .range(from, to)
+
+    const { data, count } = await query
+    setRows(data || [])
+    setTotal(count || 0)
+    setLoading(false)
+
+    const { data: allStatusRows } = await supabase
+      .from('responses')
+      .select('status')
+      .eq('project_id', projectId)
+      .eq('deleted', false)
+    const counts = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
+    ;(allStatusRows || []).forEach((r) => { if (counts[r.status] !== undefined) counts[r.status]++ })
+    setIrCounts(counts)
+  }
+
+  const irHealth = useMemo(() => {
+    if (!project) return null
+    return getIRHealth(Number(project.ir) || 0, irCounts.Completed, irCounts.Terminated)
+  }, [project, irCounts])
+
+  async function handleDelete(row) {
+    const confirmed = window.confirm(`Remove respondent ${row.uid}? This can be restored later by an admin if needed.`)
+    if (!confirmed) return
+
+    const { error } = await supabase
+      .from('responses')
+      .update({ deleted: true })
+      .eq('id', row.id)
+
     if (error) {
-      setMessage({ type: 'error', text: error.message })
+      setActionMessage({ type: 'error', text: error.message })
     } else {
-      setMessage({ type: 'success', text: `Project ${form.project_id} created.` })
-      setForm(EMPTY)
+      setActionMessage({ type: 'success', text: `Respondent ${row.uid} removed.` })
       load()
     }
   }
 
-  async function updateStatus(project_id, status) {
-    await supabase.from('projects').update({ status }).eq('project_id', project_id)
-    load()
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
-  async function updateSurveyLink(project_id, survey_link) {
-    await supabase.from('projects').update({ survey_link: survey_link || null }).eq('project_id', project_id)
-    load()
+  function toggleSelectAll() {
+    setSelectedIds((prev) => {
+      const allSelected = rows.length > 0 && rows.every((r) => prev.has(r.id))
+      if (allSelected) return new Set()
+      return new Set(rows.map((r) => r.id))
+    })
   }
 
-  async function toggleTeamAccess(project_id, team_id, currentlyLinked) {
-    if (currentlyLinked) {
-      await supabase.from('team_projects').delete().eq('project_id', project_id).eq('team_id', team_id)
-    } else {
-      await supabase.from('team_projects').insert({ project_id, team_id })
-    }
-    load()
-  }
-
-  function getRate(userId, project_id) {
-    return rates.find((r) => r.user_id === userId && r.project_id === project_id)?.amount ?? ''
-  }
-
-  async function updateRate(userId, project_id, amount) {
-    const numAmount = Number(amount) || 0
-    await supabase.from('rates').upsert(
-      { user_id: userId, project_id, amount: numAmount, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,project_id' }
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return
+    const confirmed = window.confirm(
+      `Remove ${selectedIds.size} selected respondent(s)? This can be restored later by an admin if needed.`
     )
-    load()
+    if (!confirmed) return
+
+    setBulkBusy(true)
+    const { error } = await supabase
+      .from('responses')
+      .update({ deleted: true })
+      .in('id', Array.from(selectedIds))
+
+    setBulkBusy(false)
+    if (error) {
+      setActionMessage({ type: 'error', text: error.message })
+    } else {
+      setActionMessage({ type: 'success', text: `${selectedIds.size} respondent(s) removed.` })
+      setSelectedIds(new Set())
+      load()
+    }
   }
 
-  function getTrackingLinks(project_id) {
-    return [
-      { label: 'Complete', status: 'complete', url: `${TRACK_BASE}?project=${project_id}&uid=[UID]&status=complete` },
-      { label: 'Terminate', status: 'terminate', url: `${TRACK_BASE}?project=${project_id}&uid=[UID]&status=terminate` },
-      { label: 'Quota Full', status: 'quotafull', url: `${TRACK_BASE}?project=${project_id}&uid=[UID]&status=quotafull` },
-      { label: 'Security', status: 'security', url: `${TRACK_BASE}?project=${project_id}&uid=[UID]&status=security` },
-    ]
+  async function handleClearAllTestData() {
+    if (clearConfirmText !== projectId) return
+    const confirmed = window.confirm(
+      `This will remove ALL respondent rows for ${projectId} (every page, every filter — not just what's currently visible). This can be restored later by an admin if needed. Continue?`
+    )
+    if (!confirmed) return
+
+    setClearBusy(true)
+    const { error, count } = await supabase
+      .from('responses')
+      .update({ deleted: true })
+      .eq('project_id', projectId)
+      .eq('deleted', false)
+      .select('id', { count: 'exact' })
+
+    setClearBusy(false)
+    if (error) {
+      setActionMessage({ type: 'error', text: error.message })
+    } else {
+      setActionMessage({ type: 'success', text: `Cleared ${count ?? 'all'} respondent row(s) for ${projectId}.` })
+      setClearConfirmText('')
+      setSelectedIds(new Set())
+      load()
+    }
+  }
+
+  async function handleDeleteProject() {
+    if (deleteConfirmText !== projectId) return
+    const confirmed = window.confirm(
+      `This will PERMANENTLY DELETE the project ${projectId} itself — not just its respondent data. This cannot be undone from inside the app (an admin would need to recreate it from scratch in Supabase). Are you absolutely sure?`
+    )
+    if (!confirmed) return
+
+    setDeleteBusy(true)
+    const { error } = await supabase
+      .from('projects')
+      .delete()
+      .eq('project_id', projectId)
+
+    setDeleteBusy(false)
+    if (error) {
+      setActionMessage({ type: 'error', text: `Could not delete project: ${error.message}` })
+    } else {
+      navigate('/', { replace: true })
+    }
+  }
+
+  async function handleExport() {
+    const query = buildQuery(supabase.from('responses').select('*')).order('start_time', { ascending: false })
+    const { data, error } = await query
+
+    if (error) {
+      setActionMessage({ type: 'error', text: 'Export failed: ' + error.message })
+      return
+    }
+    if (!data || data.length === 0) {
+      setActionMessage({ type: 'error', text: 'No rows to export for the current filters.' })
+      return
+    }
+
+    const headers = ['UID', 'Start Time', 'End Time', 'Duration (min)', 'Country', 'IP Address', 'Status']
+    const csvRows = data.map((r) => [
+      r.uid,
+      r.start_time ? new Date(r.start_time).toLocaleString() : '',
+      r.end_time ? new Date(r.end_time).toLocaleString() : '',
+      r.duration_min ?? '',
+      r.country ?? '',
+      r.ip_address ?? '',
+      r.status ?? '',
+    ])
+
+    const escapeCell = (cell) => {
+      const s = String(cell ?? '')
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return `"${s.replace(/"/g, '""')}"`
+      }
+      return s
+    }
+
+    const csvContent = [headers, ...csvRows].map((row) => row.map(escapeCell).join(',')).join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `${projectId}_export_${new Date().toISOString().slice(0, 10)}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
   }
 
   function copyLink(key, url) {
     navigator.clipboard.writeText(url)
-    setCopiedKey(key)
-    setTimeout(() => setCopiedKey(null), 1500)
+    setCopiedLinkKey(key)
+    setTimeout(() => setCopiedLinkKey(null), 1500)
   }
 
-  function copyAllGlobalLinks() {
-    const formatted = [
-      'PackTalk Panel Vendor Registration Links',
-      '',
-      ...GLOBAL_TRACKING_LINKS.map((l) => `${l.label}: ${l.url}`),
-      '',
-      'RESPONDENT_ID is a literal placeholder — the panel platform substitutes its own respondent ID.',
-      `Before sending a respondent to one of these links, call POST ${REGISTER_BASE} with a valid API key.`,
-    ].join('\n')
-    navigator.clipboard.writeText(formatted)
-    setCopiedKey('global_all')
-    setTimeout(() => setCopiedKey(null), 1500)
+  function clearFilters() {
+    setStatusFilter('')
+    setCountryFilter('')
+    setDateFrom('')
+    setDateTo('')
   }
 
-  async function createApiKey(e) {
-    e.preventDefault()
-    if (!newKeyLabel.trim()) {
-      setApiKeyMessage({ type: 'error', text: 'Give the key a label first (e.g. the client or platform name).' })
-      return
-    }
-    setApiKeyBusy(true)
-    setApiKeyMessage(null)
-    const keyVal = generateApiKey()
-    const { error } = await supabase.from('api_keys').insert({
-      key_val: keyVal,
-      label: newKeyLabel.trim(),
-      is_active: true,
-      created_by: user.id,
-    })
-    setApiKeyBusy(false)
-    if (error) {
-      setApiKeyMessage({ type: 'error', text: error.message })
-    } else {
-      setJustCreatedKey(keyVal)
-      setNewKeyLabel('')
-      load()
-    }
-  }
-
-  async function toggleKeyActive(id, currentlyActive) {
-    await supabase.from('api_keys').update({ is_active: !currentlyActive }).eq('id', id)
-    load()
-  }
-
-  async function generateClientLink(project_id) {
-    setGenBusy(true)
-    setGenMessage(null)
-    const token = generateToken()
-    const { error } = await supabase.from('survey_links').insert({
-      project_id,
-      country: genCountry.trim() || null,
-      age_band: genAgeBand.trim() || null,
-      token,
-      active: true,
-      created_by: user.id,
-    })
-    setGenBusy(false)
-    if (error) {
-      setGenMessage({ type: 'error', text: error.message })
-    } else {
-      setGenMessage({ type: 'success', text: `Link generated for ${project_id}.` })
-      setGenCountry('')
-      setGenAgeBand('')
-      load()
-    }
-  }
-
-  async function toggleLinkActive(id, currentlyActive) {
-    await supabase.from('survey_links').update({ active: !currentlyActive }).eq('id', id)
-    load()
-  }
-
-  function handleQuotaFile(e) {
-    const f = e.target.files[0]
-    setQuotaError(null)
-    setQuotaPreview([])
-    if (!f) return
-    const validExtensions = ['.xlsx', '.xls', '.csv']
-    const hasValidExtension = validExtensions.some((ext) => f.name.toLowerCase().endsWith(ext))
-    if (!hasValidExtension) {
-      setQuotaError('Unsupported file type. Please upload a .xlsx, .xls, or .csv file.')
-      setQuotaFile(null)
-      return
-    }
-    setQuotaFile(f)
-    const reader = new FileReader()
-    reader.onerror = () => {
-      setQuotaError('Could not read this file. Try re-exporting it and uploading again.')
-      setQuotaFile(null)
-    }
-    reader.onload = (evt) => {
-      try {
-        const wb = XLSX.read(evt.target.result, { type: 'binary' })
-        const sheet = wb.Sheets[wb.SheetNames[0]]
-        const json = XLSX.utils.sheet_to_json(sheet, { defval: '' })
-        if (json.length === 0) {
-          setQuotaError('This file has no data rows.')
-          setQuotaFile(null)
-          return
-        }
-        const firstRow = json[0]
-        const hasCountry = 'Country' in firstRow
-        const hasAgeBand = 'Age Band' in firstRow
-        const hasTarget = 'Target Count' in firstRow
-        if (!hasCountry || !hasAgeBand || !hasTarget) {
-          setQuotaError('Missing required columns. File must include: Country, Age Band, Target Count.')
-          setQuotaFile(null)
-          return
-        }
-        setQuotaPreview(json.slice(0, 5))
-      } catch (err) {
-        setQuotaError('Could not parse this file. Make sure it is a valid Excel or CSV file.')
-        setQuotaFile(null)
-      }
-    }
-    reader.readAsBinaryString(f)
-  }
-
-  async function handleQuotaUpload() {
-    if (!quotaFile || !quotaProjectId) {
-      setQuotaMessage({ type: 'error', text: 'Pick a project and a file first.' })
-      return
-    }
-    setQuotaBusy(true)
-    setQuotaMessage(null)
-    const reader = new FileReader()
-    reader.onerror = () => {
-      setQuotaBusy(false)
-      setQuotaMessage({ type: 'error', text: 'Could not read the file during upload.' })
-    }
-    reader.onload = async (evt) => {
-      try {
-        const wb = XLSX.read(evt.target.result, { type: 'binary' })
-        const sheet = wb.Sheets[wb.SheetNames[0]]
-        const json = XLSX.utils.sheet_to_json(sheet, { defval: '' })
-        const payload = []
-        const invalidRows = []
-        const labelCounters = {}
-        json.forEach((row, idx) => {
-          const country = String(row.Country || '').trim()
-          const ageBand = String(row['Age Band'] || '').trim()
-          const targetCount = Number(row['Target Count'])
-          const surveyUrl = String(row['Survey URL'] || '').trim()
-          const clientRedirectUrl = String(row['Client Redirect URL'] || '').trim()
-          let linkLabel = String(row['Link Label'] || '').trim()
-          const rowNum = idx + 2
-          if (!country || !ageBand || isNaN(targetCount)) {
-            invalidRows.push(`Row ${rowNum}: missing Country, Age Band, or a valid Target Count.`)
-            return
-          }
-          if (!linkLabel) {
-            const groupKey = `${country}|||${ageBand}`
-            labelCounters[groupKey] = (labelCounters[groupKey] || 0) + 1
-            linkLabel = `Link ${labelCounters[groupKey]}`
-          }
-          payload.push({
-            project_id: quotaProjectId,
-            country,
-            age_band: ageBand,
-            link_label: linkLabel,
-            target_count: targetCount,
-            survey_url: surveyUrl || null,
-            client_redirect_url: clientRedirectUrl || null,
-          })
-        })
-        if (payload.length === 0) {
-          setQuotaMessage({ type: 'error', text: `No valid rows found. ${invalidRows.slice(0, 3).join(' ')}` })
-          setQuotaBusy(false)
-          return
-        }
-        const { error } = await supabase
-          .from('project_quotas')
-          .upsert(payload, { onConflict: 'project_id,country,age_band,link_label' })
-        setQuotaBusy(false)
-        if (error) {
-          setQuotaMessage({ type: 'error', text: error.message })
-        } else {
-          let text = `${payload.length} quota row(s) saved for ${quotaProjectId}.`
-          if (invalidRows.length > 0) text += ` (${invalidRows.length} row(s) skipped.)`
-          setQuotaMessage({ type: 'success', text })
-          setQuotaFile(null)
-          setQuotaPreview([])
-          load()
-        }
-      } catch (err) {
-        setQuotaBusy(false)
-        setQuotaMessage({ type: 'error', text: 'Could not process this file.' })
-      }
-    }
-    reader.readAsBinaryString(quotaFile)
-  }
-
-  const projectStats = useMemo(() => {
-    const map = {}
-    for (const r of responseStats) {
-      if (!r.project_id) continue
-      if (!map[r.project_id]) {
-        map[r.project_id] = { hits: 0, completes: 0, quotafull: 0, drops: 0 }
-      }
-      const s = map[r.project_id]
-      s.hits += 1
-      if (r.completed) {
-        s.completes += 1
-      } else if (r.quota_status === 'Full') {
-        s.quotafull += 1
-      } else {
-        s.drops += 1
-      }
-    }
-    for (const project_id in map) {
-      const s = map[project_id]
-      const qualified = s.completes + s.quotafull
-      s.ir = s.hits > 0 ? Math.round((qualified / s.hits) * 100) : 0
-    }
-    return map
-  }, [responseStats])
-
-  function getProjectStats(project_id) {
-    return projectStats[project_id] || { hits: 0, completes: 0, quotafull: 0, drops: 0, ir: 0 }
-  }
-
-  const filteredProjects = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return projects
-    return projects.filter((p) =>
-      `${p.project_id} ${p.project_name} ${p.country}`.toLowerCase().includes(q)
-    )
-  }, [projects, search])
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const hasActiveFilters = statusFilter || countryFilter || dateFrom || dateTo
+  const allOnPageSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id))
+  const colCount = isAdmin ? 10 : 8
+  const clearUnlocked = clearConfirmText === projectId
+  const deleteUnlocked = deleteConfirmText === projectId
 
   return (
     <div className="page">
-      <h1>Manage Projects</h1>
-      <p className="page-sub">Add a new survey project so your team can start punching in responses.</p>
+      <div className="breadcrumb">
+        <Link to="/">Dashboard</Link> <span>›</span> <span>Project {projectId}</span>
+      </div>
+      <h1>Project Details: {projectId}</h1>
+      {project && <p className="page-sub">{project.project_name} · {project.country} · Target {project.target}</p>}
 
-      {isAdmin && (
+      {actionMessage && (
+        <div className={actionMessage.type === 'error' ? 'auth-error' : 'auth-success'} style={{ marginBottom: 12 }}>
+          {actionMessage.text}
+        </div>
+      )}
+
+      {project && irHealth && (
         <Reveal>
-          <div className="card" style={{ maxWidth: 720, marginBottom: 20, borderLeft: '3px solid rgba(168,85,247,0.5)' }}>
-            <h2 className="card-title">Global Tracking Links (No Project ID in URL)</h2>
+        <div className="card" style={{ borderLeft: `3px solid ${irHealth.color}` }}>
+          <h2 className="card-title">IR Health Check</h2>
+          {irHealth.status === 'insufficient' ? (
             <p className="card-hint">
-              For a client whose platform can only send <code>status</code> and its own respondent ID.
-              Before sending a respondent to one of these links, your client (or your team) must call{' '}
-              <code>POST {REGISTER_BASE}</code> with an API key (below), the <code>project_id</code>, and the respondent's <code>uid</code>,
-              so the registration tells us which project the hit belongs to.
+              Not enough data yet ({irHealth.sample} Completed+Terminated so far — need at least {IR_MIN_SAMPLE} to evaluate).
             </p>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 10 }}>
-              <button type="button" className="btn-ghost" onClick={copyAllGlobalLinks}>
-                {copiedKey === 'global_all' ? 'Copied All ✓' : 'Copy All Links'}
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
-              {GLOBAL_TRACKING_LINKS.map((link) => (
-                <div key={link.status} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>{link.label}</span>
-                  <input
-                    readOnly
-                    value={link.url}
-                    onFocus={(e) => e.target.select()}
-                    style={{ flex: 1, minWidth: 260, fontFamily: 'monospace', fontSize: 12 }}
-                  />
-                  <button type="button" className="btn-ghost" onClick={() => copyLink('global_' + link.status, link.url)}>
-                    {copiedKey === ('global_' + link.status) ? 'Copied ✓' : 'Copy'}
-                  </button>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', margin: '12px 0' }}>
+                <div>
+                  <div className="card-hint">Expected IR</div>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}>{project.ir}%</div>
                 </div>
-              ))}
-            </div>
-            <div style={{ paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-              <h3 style={{ fontSize: 15, marginBottom: 8 }}>API Keys</h3>
-              <p className="card-hint" style={{ marginBottom: 10 }}>
-                Each client or platform using the registration endpoint needs its own key, sent as a header on <code>POST {REGISTER_BASE}</code>.
-              </p>
-              <form onSubmit={createApiKey} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-                <input
-                  value={newKeyLabel}
-                  onChange={(e) => setNewKeyLabel(e.target.value)}
-                  placeholder="Label, e.g. Client X Exchange"
-                  style={{ flex: 1, minWidth: 200 }}
-                />
-                <button className="btn-primary" type="submit" disabled={apiKeyBusy}>
-                  {apiKeyBusy ? 'Generating…' : 'Generate Key'}
-                </button>
-              </form>
-              {apiKeyMessage && <div className="auth-error" style={{ marginBottom: 10 }}>{apiKeyMessage.text}</div>}
-              {justCreatedKey && (
-                <div className="auth-success" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span>New key created — copy it now, it won't be highlighted like this again:</span>
-                  <input readOnly value={justCreatedKey} onFocus={(e) => e.target.select()} style={{ fontFamily: 'monospace', fontSize: 12, flex: 1 }} />
-                  <button type="button" className="btn-ghost" onClick={() => copyLink('newkey', justCreatedKey)}>
-                    {copiedKey === 'newkey' ? 'Copied ✓' : 'Copy'}
-                  </button>
+                <div>
+                  <div className="card-hint">Actual IR</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: irHealth.color }}>{irHealth.actualIR.toFixed(1)}%</div>
                 </div>
-              )}
+                <div>
+                  <div className="card-hint">Status</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: irHealth.color }}>{irHealth.label}</div>
+                </div>
+              </div>
               <div className="table-wrap">
                 <table className="data-table small">
                   <thead>
-                    <tr><th>Label</th><th>Key</th><th>Status</th><th>Created</th><th></th></tr>
+                    <tr><th></th><th>Expected (of {irCounts.Completed + irCounts.Terminated})</th><th>Actual</th></tr>
                   </thead>
                   <tbody>
-                    {apiKeys.map((k) => (
-                      <tr key={k.id}>
-                        <td>{k.label}</td>
-                        <td>
-                          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                            <code style={{ fontSize: 12 }}>{k.key_val}</code>
-                            <button type="button" className="btn-ghost" style={{ padding: '2px 8px' }} onClick={() => copyLink('key_' + k.id, k.key_val)}>
-                              {copiedKey === 'key_' + k.id ? 'Copied ✓' : 'Copy'}
-                            </button>
-                          </span>
-                        </td>
-                        <td><span className={`badge ${k.is_active ? 'badge-green' : 'badge-gray'}`}>{k.is_active ? 'Active' : 'Disabled'}</span></td>
-                        <td>{k.created_at ? new Date(k.created_at).toLocaleDateString() : '—'}</td>
-                        <td>
-                          <button type="button" className="btn-ghost" onClick={() => toggleKeyActive(k.id, k.is_active)}>
-                            {k.is_active ? 'Disable' : 'Enable'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {apiKeys.length === 0 && (
-                      <tr><td colSpan={5} className="empty-row">No API keys yet.</td></tr>
-                    )}
+                    <tr>
+                      <td>Completed</td>
+                      <td>{Math.round((irCounts.Completed + irCounts.Terminated) * (Number(project.ir) || 0) / 100)}</td>
+                      <td className="text-green">{irCounts.Completed}</td>
+                    </tr>
+                    <tr>
+                      <td>Terminated</td>
+                      <td>{Math.round((irCounts.Completed + irCounts.Terminated) * (100 - (Number(project.ir) || 0)) / 100)}</td>
+                      <td className="text-red">{irCounts.Terminated}</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
+              <p className="card-hint" style={{ marginTop: 8 }}>
+                QuotaFull ({irCounts.QuotaFull}) and Disqualify ({irCounts.Disqualify}) are excluded from this ratio.
+              </p>
+            </>
+          )}
+        </div>
+        </Reveal>
+      )}
+
+      {project && (project.entry_token || quotas.length > 0) && (
+        <Reveal>
+        <div className="card">
+          <h2 className="card-title">Panel Entry Link{quotas.length > 1 ? 's' : ''}</h2>
+          <p className="card-hint">
+            This is the link to post to your own panel — every respondent who clicks it gets a fresh, random ID
+            automatically and is sent into the client's real survey. It never reveals the client's domain or our
+            internal Project ID.
+          </p>
+
+          {project.entry_token && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+              <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>Entry Link</span>
+              <input
+                readOnly
+                value={`https://pack-talk-dashboard.vercel.app/api/enter/${project.entry_token}`}
+                onFocus={(e) => e.target.select()}
+                style={{ flex: 1, minWidth: 260, fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <button type="button" className="btn-ghost" onClick={() => copyLink('main', `https://pack-talk-dashboard.vercel.app/api/enter/${project.entry_token}`)}>
+                {copiedLinkKey === 'main' ? 'Copied ✓' : 'Copy'}
+              </button>
             </div>
-          </div>
+          )}
+
+          {!project.entry_token && (
+            <p className="card-hint" style={{ marginTop: 12 }}>
+              No entry link exists for this project yet — it was created before this feature, or via the old Manage
+              Projects form. Generate one from the Link Generator page.
+            </p>
+          )}
+
+          {quotas.length > 0 && (
+            <div className="table-wrap" style={{ marginTop: project.entry_token ? 16 : 12 }}>
+              <table className="data-table small">
+                <thead>
+                  <tr><th>Country</th><th>Age Band</th><th>Target</th><th>Survey URL</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {quotas.map((q) => {
+                    const key = `${q.country}-${q.age_band}`
+                    return (
+                      <tr key={key}>
+                        <td>{q.country}</td>
+                        <td>{q.age_band}</td>
+                        <td>{q.target_count}</td>
+                        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{q.survey_url || '—'}</td>
+                        <td>
+                          {q.survey_url && (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button type="button" className="btn-ghost" onClick={() => copyLink(key, q.survey_url)}>
+                                {copiedLinkKey === key ? 'Copied ✓' : 'Copy'}
+                              </button>
+                              <a href={q.survey_url} target="_blank" rel="noreferrer" className="btn-ghost">Open</a>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
         </Reveal>
       )}
 
       <Reveal>
-        <div className="card" style={{ maxWidth: 640 }}>
-          <h2 className="card-title">New Project</h2>
-          <form onSubmit={handleSubmit} className="form-grid">
-            <label>Project ID
-              <input required value={form.project_id} onChange={(e) => setForm({ ...form, project_id: e.target.value })} />
-            </label>
-            <label>Project Name
-              <input required value={form.project_name} onChange={(e) => setForm({ ...form, project_name: e.target.value })} />
-            </label>
-            <label style={{ gridColumn: '1 / -1' }}>Description
-              <textarea
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                placeholder="Brief background on this survey — target audience, objective, and so on."
-                rows={3}
-              />
-            </label>
-            <label>Country
-              <input required value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
-            </label>
-            <label>Req Completes
-              <input type="number" value={form.req_completes} onChange={(e) => setForm({ ...form, req_completes: e.target.value })} />
-            </label>
-            <label>Max Completes
-              <input type="number" value={form.max_completes} onChange={(e) => setForm({ ...form, max_completes: e.target.value })} placeholder="Defaults to Req Completes if left blank" />
-            </label>
-            <label>LOI (min)
-              <input type="number" value={form.loi} onChange={(e) => setForm({ ...form, loi: e.target.value })} />
-            </label>
-            <label>IR (%)
-              <input type="number" value={form.ir} onChange={(e) => setForm({ ...form, ir: e.target.value })} />
-            </label>
-            <label>Launch Date
-              <input type="date" value={form.launch_date} onChange={(e) => setForm({ ...form, launch_date: e.target.value })} />
-            </label>
-            <label>Survey Link (optional)
-              <input value={form.survey_link} onChange={(e) => setForm({ ...form, survey_link: e.target.value })} />
-            </label>
-            {message && <div className={message.type === 'error' ? 'auth-error' : 'auth-success'}>{message.text}</div>}
-            <button className="btn-primary" type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create Project'}</button>
-          </form>
+      <div className="card">
+        <h2 className="card-title">Filters</h2>
+        <div className="form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+          <label>Status
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">All</option>
+              <option value="Completed">Completed</option>
+              <option value="Terminated">Terminated</option>
+              <option value="QuotaFull">QuotaFull</option>
+              <option value="Disqualify">Disqualify</option>
+            </select>
+          </label>
+          <label>Country
+            <input value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} placeholder="Search country…" />
+          </label>
+          <label>From Date
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </label>
+          <label>To Date
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </label>
         </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          {hasActiveFilters && (
+            <button className="btn-ghost" onClick={clearFilters}>Clear Filters</button>
+          )}
+          <button className="btn-primary" onClick={handleExport}>Download CSV</button>
+        </div>
+      </div>
       </Reveal>
 
-      <Reveal delay={80}>
-        <div className="card">
-          <div className="section-header-row">
-            <h2 className="card-title">All Projects</h2>
-            <input
-              className="search-input"
-              placeholder="Search by Project ID, name, or country…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr><th>Project ID</th><th>Name</th><th>Country</th><th>Req / Max</th><th>Hits</th><th>Completes</th><th>Drops</th><th>QF</th><th>IR%</th><th>Status</th><th>Teams</th><th></th></tr>
-              </thead>
-              <tbody>
-                {filteredProjects.map((p) => {
-                  const linkedTeamIds = teamProjects.filter((tp) => tp.project_id === p.project_id).map((tp) => tp.team_id)
-                  const stats = getProjectStats(p.project_id)
-                  const reqCompletes = p.req_completes ?? p.target ?? null
-                  const maxCompletes = p.max_completes ?? p.target ?? null
-                  const atMax = maxCompletes != null && stats.completes >= maxCompletes
-                  const atReq = reqCompletes != null && stats.completes >= reqCompletes
-                  return (
-                    <tr key={p.project_id}>
-                      <td>{p.project_id}</td>
-                      <td>{p.project_name}</td>
-                      <td>{p.country}</td>
-                      <td>
-                        <span
-                          className={`badge ${atMax ? 'badge-green' : atReq ? 'badge-gray' : 'badge-gray'}`}
-                          title={atMax ? 'Hit max completes' : atReq ? 'Hit req completes, still below max' : 'Below req completes'}
-                        >
-                          {reqCompletes ?? '—'} / {maxCompletes ?? '—'}
-                        </span>
-                      </td>
-                      <td>{stats.hits}</td>
-                      <td>{stats.completes}</td>
-                      <td>{stats.drops}</td>
-                      <td>{stats.quotafull}</td>
-                      <td>
-                        <span
-                          className={`badge ${stats.hits === 0 ? 'badge-gray' : stats.ir >= (p.ir || 0) ? 'badge-green' : 'badge-gray'}`}
-                          title={p.ir ? `Target IR: ${p.ir}%` : 'No target IR set'}
-                        >
-                          {stats.hits === 0 ? '—' : `${stats.ir}%`}
-                        </span>
-                      </td>
-                      <td><span className={`badge ${p.status === 'Live' ? 'badge-green' : 'badge-gray'}`}>{p.status}</span></td>
-                      <td>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {teams.length === 0 && <span className="card-hint">No teams yet</span>}
-                          {teams.map((t) => {
-                            const linked = linkedTeamIds.includes(t.id)
-                            return (
-                              <button
-                                key={t.id}
-                                onClick={() => toggleTeamAccess(p.project_id, t.id, linked)}
-                                className={linked ? 'badge badge-green' : 'badge badge-gray'}
-                                style={{ cursor: 'pointer', border: 'none' }}
-                                title={linked ? 'Click to remove access' : 'Click to grant access'}
-                              >
-                                {t.name} {linked ? '✓' : '+'}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </td>
-                      <td style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <select value={p.status} onChange={(e) => updateStatus(p.project_id, e.target.value)}>
-                          <option value="Live">Live</option>
-                          <option value="Paused">Paused</option>
-                          <option value="Closed">Closed</option>
-                        </select>
-                        <button
-                          className="btn-ghost"
-                          onClick={() => setRatesProjectId(ratesProjectId === p.project_id ? null : p.project_id)}
-                        >
-                          {ratesProjectId === p.project_id ? 'Hide Rates' : 'Manage Rates'}
-                        </button>
-                        <button
-                          className="btn-ghost"
-                          onClick={() => setLinksProjectId(linksProjectId === p.project_id ? null : p.project_id)}
-                        >
-                          {linksProjectId === p.project_id ? 'Hide Links' : 'Tracking Links'}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {filteredProjects.length === 0 && (
-                  <tr><td colSpan={12} className="empty-row">No projects match your search.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {ratesProjectId && (
-            <div className="card" style={{ marginTop: 16, background: 'rgba(255,255,255,0.02)' }}>
-              <h2 className="card-title">Pay Rates — {ratesProjectId}</h2>
-              <p className="card-hint">Set how much each person earns per Completed respondent on this project.</p>
-              <div className="table-wrap">
-                <table className="data-table small">
-                  <thead>
-                    <tr><th>Name</th><th>Email</th><th>Rate per Completed (₹)</th></tr>
-                  </thead>
-                  <tbody>
-                    {members.filter((m) => m.role !== 'admin').map((m) => (
-                      <tr key={m.id}>
-                        <td>{m.full_name || '—'}</td>
-                        <td>{m.email}</td>
-                        <td>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            defaultValue={getRate(m.id, ratesProjectId)}
-                            onBlur={(e) => updateRate(m.id, ratesProjectId, e.target.value)}
-                            style={{ width: 100 }}
-                            placeholder="0"
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {linksProjectId && (
-            <div className="card" style={{ marginTop: 16, background: 'rgba(255,255,255,0.02)' }}>
-              <h2 className="card-title">Tracking Links — {linksProjectId}</h2>
-              <p className="card-hint">
-                Replace <code>[UID]</code> with your respondent ID variable.
-              </p>
-              <div style={{ marginTop: 12, marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--muted, #888)' }}>
-                  Client's Survey Link
-                </label>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <input
-                    defaultValue={projects.find((p) => p.project_id === linksProjectId)?.survey_link || ''}
-                    onBlur={(e) => updateSurveyLink(linksProjectId, e.target.value)}
-                    placeholder="e.g. https://forms.gle/xxxxx"
-                    style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }}
-                  />
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {getTrackingLinks(linksProjectId).map((link) => (
-                  <div key={link.status} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>{link.label}</span>
-                    <input
-                      readOnly
-                      value={link.url}
-                      onFocus={(e) => e.target.select()}
-                      style={{ flex: 1, minWidth: 260, fontFamily: 'monospace', fontSize: 12 }}
-                    />
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => copyLink(link.status, link.url)}
-                    >
-                      {copiedKey === link.status ? 'Copied ✓' : 'Copy'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                <h3 style={{ fontSize: 15, marginBottom: 6 }}>Generate Client Link (Token-in-Path)</h3>
-                <p className="card-hint" style={{ marginBottom: 10 }}>
-                  For clients whose platform issues one fixed URL per vendor and can't accept custom query params.
-                  Optionally scope to a country/age-band, or leave blank for a project-wide link.
-                  <code> {'{uid}'} </code> stays literal — their system fills it in per respondent.
-                </p>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                  <input
-                    value={genCountry}
-                    onChange={(e) => setGenCountry(e.target.value)}
-                    placeholder="Country (optional)"
-                    style={{ width: 160 }}
-                  />
-                  <input
-                    value={genAgeBand}
-                    onChange={(e) => setGenAgeBand(e.target.value)}
-                    placeholder="Age Band (optional)"
-                    style={{ width: 160 }}
-                  />
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    disabled={genBusy}
-                    onClick={() => generateClientLink(linksProjectId)}
-                  >
-                    {genBusy ? 'Generating…' : 'Generate Client Link'}
-                  </button>
-                </div>
-                {genMessage && (
-                  <div className={genMessage.type === 'error' ? 'auth-error' : 'auth-success'} style={{ marginBottom: 10 }}>
-                    {genMessage.text}
-                  </div>
-                )}
-
-                <div className="table-wrap">
-                  <table className="data-table small">
-                    <thead>
-                      <tr><th>Token</th><th>Country</th><th>Age Band</th><th>Status</th><th>Created</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {surveyLinks.filter((l) => l.project_id === linksProjectId).map((l) => (
-                        <tr key={l.id}>
-                          <td><code style={{ fontSize: 12 }}>{l.token}</code></td>
-                          <td>{l.country || '—'}</td>
-                          <td>{l.age_band || '—'}</td>
-                          <td><span className={`badge ${l.active ? 'badge-green' : 'badge-gray'}`}>{l.active ? 'Active' : 'Inactive'}</span></td>
-                          <td>{l.created_at ? new Date(l.created_at).toLocaleDateString() : '—'}</td>
-                          <td>
-                            <button type="button" className="btn-ghost" onClick={() => toggleLinkActive(l.id, l.active)}>
-                              {l.active ? 'Deactivate' : 'Reactivate'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {surveyLinks.filter((l) => l.project_id === linksProjectId).length === 0 && (
-                        <tr><td colSpan={6} className="empty-row">No client links generated yet for this project.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {surveyLinks.filter((l) => l.project_id === linksProjectId && l.active).length > 0 && (
-                  <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {getClientLinkUrls(surveyLinks.find((l) => l.project_id === linksProjectId && l.active)?.token).map((link) => (
-                      <div key={link.status} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span className="badge badge-gray" style={{ minWidth: 90, textAlign: 'center' }}>{link.label}</span>
-                        <input
-                          readOnly
-                          value={link.url}
-                          onFocus={(e) => e.target.select()}
-                          style={{ flex: 1, minWidth: 260, fontFamily: 'monospace', fontSize: 12 }}
-                        />
-                        <button type="button" className="btn-ghost" onClick={() => copyLink('client_' + link.status, link.url)}>
-                          {copiedKey === ('client_' + link.status) ? 'Copied ✓' : 'Copy'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </Reveal>
-
-      {projects.length > 0 && (
-        <Reveal delay={120}>
-          <div className="card" style={{ maxWidth: 640 }}>
-            <h2 className="card-title">Upload Quota Brief</h2>
-            <p className="card-hint">
-              Set quotas for any project yourself — no need to wait on a client. Upload an Excel or CSV file with columns: Country, Age Band, Target Count (Survey URL, Client Redirect URL, and Link Label are optional).
-            </p>
-            <label className="field-label">Project
-              <select value={quotaProjectId} onChange={(e) => setQuotaProjectId(e.target.value)}>
-                {projects.map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
-              </select>
-            </label>
-            <label className="field-label">Quota File (.xlsx / .csv)
-              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleQuotaFile} />
-            </label>
-            {quotaError && <div className="auth-error" style={{ marginTop: 8 }}>{quotaError}</div>}
-            {quotaPreview.length > 0 && (
-              <div className="table-wrap" style={{ marginTop: 12 }}>
-                <table className="data-table small">
-                  <thead>
-                    <tr>{Object.keys(quotaPreview[0]).map((k) => <th key={k}>{k}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {quotaPreview.map((row, i) => (
-                      <tr key={i}>{Object.values(row).map((v, j) => <td key={j}>{String(v)}</td>)}</tr>
-                    ))}
-                  </tbody>
-                </table>
-                <p className="card-hint">Showing first {quotaPreview.length} rows as a preview.</p>
-              </div>
-            )}
-            {quotaMessage && (
-              <div className={quotaMessage.type === 'error' ? 'auth-error' : 'auth-success'} style={{ marginTop: 10 }}>{quotaMessage.text}</div>
-            )}
-            <button className="btn-primary" onClick={handleQuotaUpload} disabled={quotaBusy} style={{ marginTop: 12 }}>
-              {quotaBusy ? 'Uploading…' : 'Upload Quota File'}
+      <Reveal>
+      <div className="card">
+        <div className="section-header-row">
+          <h2 className="card-title">Member Survey Overview</h2>
+          {isAdmin && selectedIds.size > 0 && (
+            <button
+              className="btn-ghost"
+              onClick={handleBulkDelete}
+              disabled={bulkBusy}
+              style={{ color: '#f87171' }}
+            >
+              {bulkBusy ? 'Removing…' : `Delete Selected (${selectedIds.size})`}
             </button>
-          </div>
+          )}
+        </div>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                {isAdmin && (
+                  <th style={{ width: 32 }}>
+                    <input
+                      type="checkbox"
+                      checked={allOnPageSelected}
+                      onChange={toggleSelectAll}
+                      disabled={rows.length === 0}
+                    />
+                  </th>
+                )}
+                <th>#</th>
+                <th>UID</th>
+                <th>Start Time</th>
+                <th>End Time</th>
+                <th>Duration</th>
+                <th>Country</th>
+                <th>IP Address</th>
+                <th>Status</th>
+                {isAdmin && <th>Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td colSpan={colCount} className="empty-row">Loading…</td></tr>}
+              {!loading && rows.map((r, i) => (
+                <tr key={r.id}>
+                  {isAdmin && (
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleSelect(r.id)}
+                      />
+                    </td>
+                  )}
+                  <td>{page * PAGE_SIZE + i + 1}</td>
+                  <td>{r.uid}</td>
+                  <td>{new Date(r.start_time).toLocaleString()}</td>
+                  <td>{r.end_time ? new Date(r.end_time).toLocaleString() : '—'}</td>
+                  <td>{r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
+                  <td>{r.country}</td>
+                  <td>{r.ip_address || '—'}</td>
+                  <td><span className={`badge ${STATUS_CLASS[r.status]}`}>{r.status}</span></td>
+                  {isAdmin && (
+                    <td>
+                      <button className="btn-ghost" onClick={() => handleDelete(r)} style={{ color: '#f87171' }}>
+                        Delete
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {!loading && rows.length === 0 && (
+                <tr><td colSpan={colCount} className="empty-row">No respondents match the current filters.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="pagination">
+          <button className="btn-ghost" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Previous</button>
+          <span>Page {page + 1} of {totalPages}</span>
+          <button className="btn-ghost" disabled={page + 1 >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</button>
+        </div>
+      </div>
+      </Reveal>
+
+      {isAdmin && (
+        <Reveal>
+        <div className="card" style={{ borderLeft: '3px solid #DC2626', marginTop: 20 }}>
+          <h2 className="card-title" style={{ color: '#f87171' }}>Danger Zone</h2>
+          <p className="card-hint">
+            Wipe every respondent row for <strong>{projectId}</strong> — not just this page, all of it, ignoring any filters above. Meant for clearing throwaway test data, not real respondents. This is a soft delete, so an admin can still restore it afterward if needed.
+          </p>
+          <label style={{ display: 'block', marginTop: 12, marginBottom: 8 }}>
+            Type <code>{projectId}</code> to unlock
+            <input
+              value={clearConfirmText}
+              onChange={(e) => setClearConfirmText(e.target.value)}
+              placeholder={projectId}
+              style={{ maxWidth: 240, marginTop: 6 }}
+            />
+          </label>
+          <button
+            className="btn-ghost"
+            onClick={handleClearAllTestData}
+            disabled={!clearUnlocked || clearBusy}
+            style={{ color: '#f87171', opacity: clearUnlocked ? 1 : 0.5 }}
+          >
+            {clearBusy ? 'Clearing…' : `Clear All Test Data for ${projectId}`}
+          </button>
+
+          <hr style={{ margin: '24px 0', border: 'none', borderTop: '1px solid rgba(220,38,38,0.3)' }} />
+
+          <h3 style={{ color: '#f87171', fontSize: 15, marginBottom: 4 }}>Delete This Project Permanently</h3>
+          <p className="card-hint">
+            Removes <strong>{projectId}</strong> itself from Manage Projects — not just its respondent data. This is <strong>not</strong> a soft delete and cannot be undone from inside the app. Only use this for throwaway test projects, never for a project with real client data.
+          </p>
+          <label style={{ display: 'block', marginTop: 12, marginBottom: 8 }}>
+            Type <code>{projectId}</code> to unlock
+            <input
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder={projectId}
+              style={{ maxWidth: 240, marginTop: 6 }}
+            />
+          </label>
+          <button
+            className="btn-ghost"
+            onClick={handleDeleteProject}
+            disabled={!deleteUnlocked || deleteBusy}
+            style={{ color: '#fff', background: '#DC2626', opacity: deleteUnlocked ? 1 : 0.5 }}
+          >
+            {deleteBusy ? 'Deleting…' : `Permanently Delete ${projectId}`}
+          </button>
+        </div>
         </Reveal>
       )}
     </div>
