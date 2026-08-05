@@ -9,7 +9,7 @@ const STATUS_META = {
   Completed: { label: 'Complete', color: '#16A34A', icon: '✓' },
   Terminated: { label: 'Terminate', color: '#DC2626', icon: '⛔' },
   QuotaFull: { label: 'Quota Full', color: '#D97706', icon: '⚠' },
-  Disqualify: { label: 'Disqualify', color: '#6B7280', icon: '✕' },
+  Disqualify: { label: 'Abandoned', color: '#6B7280', icon: '✕' },
 }
 
 const IR_MIN_SAMPLE = 5
@@ -50,7 +50,7 @@ export default function Dashboard() {
   const { profile, isAdmin } = useAuth()
   const [projects, setProjects] = useState([])
   const [responses, setResponses] = useState([])
-  const [allowedProjectIds, setAllowedProjectIds] = useState(null) // null = no restriction (admin)
+  const [allowedProjectIds, setAllowedProjectIds] = useState(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
@@ -76,7 +76,7 @@ export default function Dashboard() {
 
     const [{ data: projData }, { data: respData }] = await Promise.all([
       supabase.from('projects').select('*').order('created_at', { ascending: false }),
-      supabase.from('responses').select('project_id, status, start_time, country'),
+      supabase.from('responses').select('project_id, status, start_time, country, uid'),
     ])
 
     const visibleProjects = allowedIds === null
@@ -91,16 +91,22 @@ export default function Dashboard() {
   const todayCounts = useMemo(() => {
     const c = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
     const visibleIds = new Set(projects.map((p) => p.project_id))
-    responses.filter((r) => visibleIds.has(r.project_id) && isToday(r.start_time)).forEach((r) => c[r.status]++)
+    responses.filter((r) => visibleIds.has(r.project_id) && isToday(r.start_time)).forEach((r) => {
+      if (!isAdmin && r.uid && r.uid.startsWith('NOSTING-')) return;
+      c[r.status]++
+    })
     return c
-  }, [responses, projects])
+  }, [responses, projects, isAdmin])
 
   const monthCounts = useMemo(() => {
     const c = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
     const visibleIds = new Set(projects.map((p) => p.project_id))
-    responses.filter((r) => visibleIds.has(r.project_id) && isThisMonth(r.start_time)).forEach((r) => c[r.status]++)
+    responses.filter((r) => visibleIds.has(r.project_id) && isThisMonth(r.start_time)).forEach((r) => {
+      if (!isAdmin && r.uid && r.uid.startsWith('NOSTING-')) return;
+      c[r.status]++
+    })
     return c
-  }, [responses, projects])
+  }, [responses, projects, isAdmin])
 
   const projectRows = useMemo(() => {
     return projects
@@ -108,13 +114,13 @@ export default function Dashboard() {
         (p.project_id + p.project_name + p.country).toLowerCase().includes(search.toLowerCase())
       )
       .map((p) => {
-        const rows = responses.filter((r) => r.project_id === p.project_id)
+        const rows = responses.filter((r) => r.project_id === p.project_id && (isAdmin || !r.uid || !r.uid.startsWith('NOSTING-')))
         const counts = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
         rows.forEach((r) => counts[r.status]++)
         const irHealth = getIRHealth(p, counts)
         return { ...p, totalHits: rows.length, counts, irHealth }
       })
-  }, [projects, responses, search])
+  }, [projects, responses, search, isAdmin])
 
   if (loading) return <div className="page-loading">Loading dashboard…</div>
 
@@ -198,7 +204,7 @@ export default function Dashboard() {
                 <th>Completed</th>
                 <th>Terminated</th>
                 <th>QuotaFull</th>
-                <th>Disqualify</th>
+                <th>Abandoned</th>
                 <th>IR Health</th>
               </tr>
             </thead>
