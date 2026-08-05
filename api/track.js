@@ -39,7 +39,7 @@ function buildClientRedirectUrl(template, { uid, status, country, age_band }) {
 }
 
 function confirmationHtml({ project, uid, ip, statusLabel, finalStatusKey, isDuplicateIp, redirectUrl }) {
-  const copyText = `UID / Sting ID\tIP Address\tStatus\n${uid}\t${ip}\t${statusLabel}`
+  const copyText = `Project ID\tUser ID\tIP Address\tStatus\n${project}\t${uid}\t${ip}\t${statusLabel}`
   return `
     <!DOCTYPE html>
     <html>
@@ -72,10 +72,11 @@ function confirmationHtml({ project, uid, ip, statusLabel, finalStatusKey, isDup
         ${isDuplicateIp ? `<div class="dupe-note">This IP address already submitted a response for this project. Automatically marked Terminated.</div>` : ''}
         <table>
           <thead>
-            <tr><th>UID / Sting ID</th><th>IP Address</th><th>Status</th></tr>
+            <tr><th>Project ID</th><th>User ID</th><th>IP Address</th><th>Status</th></tr>
           </thead>
           <tbody>
             <tr>
+              <td>${escapeHtml(project)}</td>
               <td>${escapeHtml(uid)}</td>
               <td>${escapeHtml(ip)}</td>
               <td><span class="status-badge ${finalStatusKey === 'terminate' || finalStatusKey === 'security' ? 'term' : finalStatusKey === 'quotafull' ? 'qf' : ''}">${escapeHtml(statusLabel)}</span></td>
@@ -220,7 +221,47 @@ function opinionsFormHtml({ project, uid, ip, redirectUrl }) {
               document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,sans-serif;background:#0a0a0f;color:#fff"><div style="text-align:center"><h2>Thank you!</h2><p style="color:#888">Redirecting you back...</p></div></div>'
               setTimeout(() => { window.location.href = redirectUrl }, 1500)
             } else {
-              document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,sans-serif;background:#0a0a0f;color:#fff"><div style="text-align:center"><h2>✓ Response Submitted!</h2><p style="color:#888">Thank you for your feedback.</p></div></div>'
+              const copyStr = "Project ID\\tUser ID\\tIP Address\\tStatus\\n" + 
+                              ${JSON.stringify(project)} + "\\t" + 
+                              ${JSON.stringify(uid)} + "\\t" + 
+                              ${JSON.stringify(ip)} + "\\t" + 
+                              "Completed";
+              
+              document.body.innerHTML = \`
+                <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:-apple-system,sans-serif;background:#0a0a0f;color:#fff;padding:20px;">
+                  <div style="background:#16161f;border:1px solid #2a2a3a;border-radius:16px;padding:28px 32px;max-width:720px;width:100%;">
+                    <h1 style="text-align:center;margin-top:0;margin-bottom:20px;">✓ Response Submitted!</h1>
+                    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                      <thead>
+                        <tr>
+                          <th style="text-align:left;padding:10px 14px;color:#888;font-size:12px;text-transform:uppercase;border-bottom:1px solid #2a2a3a;">Project ID</th>
+                          <th style="text-align:left;padding:10px 14px;color:#888;font-size:12px;text-transform:uppercase;border-bottom:1px solid #2a2a3a;">User ID</th>
+                          <th style="text-align:left;padding:10px 14px;color:#888;font-size:12px;text-transform:uppercase;border-bottom:1px solid #2a2a3a;">IP Address</th>
+                          <th style="text-align:left;padding:10px 14px;color:#888;font-size:12px;text-transform:uppercase;border-bottom:1px solid #2a2a3a;">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style="padding:14px;font-size:15px;border-bottom:1px solid #22222f;font-family:monospace;">\${${JSON.stringify(project)}}</td>
+                          <td style="padding:14px;font-size:15px;border-bottom:1px solid #22222f;font-family:monospace;">\${${JSON.stringify(uid)}}</td>
+                          <td style="padding:14px;font-size:15px;border-bottom:1px solid #22222f;font-family:monospace;">\${${JSON.stringify(ip)}}</td>
+                          <td style="padding:14px;font-size:15px;border-bottom:1px solid #22222f;font-family:monospace;"><span style="display:inline-block;padding:4px 12px;border-radius:20px;font-weight:600;font-size:13px;background:rgba(34,197,94,0.15);color:#22c55e;">Completed</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <button id="copyBtn" style="display:block;margin:0 auto;background:linear-gradient(90deg,#f97316,#a855f7);color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">Copy</button>
+                    <div id="copyMsg" style="color:#22c55e;text-align:center;font-size:13px;margin-top:10px;min-height:16px;"></div>
+                  </div>
+                </div>
+              \`;
+
+              document.getElementById('copyBtn').addEventListener('click', () => {
+                navigator.clipboard.writeText(copyStr).then(() => {
+                  document.getElementById('copyMsg').textContent = 'Copied! Paste directly into Excel.';
+                }).catch(() => {
+                  document.getElementById('copyMsg').textContent = 'Could not copy automatically.';
+                });
+              });
             }
           } catch (err) {
             errMsg.textContent = err.message
@@ -229,6 +270,29 @@ function opinionsFormHtml({ project, uid, ip, redirectUrl }) {
           }
         })
       </script>
+    </body>
+    </html>
+  `
+}
+
+function rateLimitedHtml() {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Too Many Requests</title>
+      <style>
+        body { font-family: -apple-system, sans-serif; background: #0a0a0f; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
+        .card { background: #16161f; border: 1px solid #2a2a3a; border-radius: 16px; padding: 28px 32px; max-width: 480px; width: 100%; text-align: center; }
+        h1 { font-size: 18px; margin: 0 0 10px 0; }
+        p { color: #999; font-size: 14px; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h1>Too Many Requests</h1>
+        <p>This link has been hit too many times in a short period from this connection. Please wait a moment and try again.</p>
+      </div>
     </body>
     </html>
   `
@@ -273,7 +337,9 @@ export default async function handler(req, res) {
   }
   let mapping = mapping0
 
-  // If no project was given directly in the URL
+  // If no project was given directly in the URL (the query-param links
+  // always include it), fall back to the respondent registry — the client
+  // must have called POST /api/register-respondent for this uid first.
   if (!project) {
     const { data: regRows, error: regError } = await supabase
       .from('respondent_registry')
@@ -302,7 +368,6 @@ export default async function handler(req, res) {
       const cleEntry = cleRows && cleRows[0]
       if (cleEntry && cleEntry.project_id) {
         project = cleEntry.project_id
-        // Swap the random number BACK to the original alphabets!
         if (cleEntry.original_uid) {
           uid = cleEntry.original_uid
         }
@@ -375,6 +440,8 @@ export default async function handler(req, res) {
       return res.status(500).send('Error logging response: ' + error.message)
     }
   }
+
+  // (Removed floating promise that updates respondent_registry.status since the column doesn't exist)
 
   let clientRedirectTemplate = null
   if (country) {
