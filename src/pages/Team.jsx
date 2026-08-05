@@ -28,6 +28,10 @@ export default function Team() {
   const [newStingText, setNewStingText] = useState({})
   const [stingError, setStingError] = useState({})
 
+  const [fireBusyId, setFireBusyId] = useState(null)
+  const [fireMessage, setFireMessage] = useState(null)
+  const [showFormer, setShowFormer] = useState(false)
+
   useEffect(() => { load() }, [])
 
   async function load() {
@@ -47,6 +51,15 @@ export default function Team() {
 
   // Can the current user edit this particular member row (name / stings only)?
   function canEditMember(m) {
+    if (isAdmin) return true
+    if (isTeamLead) return m.role === 'tl' && m.team_id === profile?.team_id
+    return false
+  }
+
+  // Can the current user fire this particular member?
+  function canFireMember(m) {
+    if (m.id === profile?.id) return false
+    if (m.role === 'admin' || m.role === 'client') return false
     if (isAdmin) return true
     if (isTeamLead) return m.role === 'tl' && m.team_id === profile?.team_id
     return false
@@ -171,7 +184,61 @@ export default function Team() {
     load()
   }
 
+  async function fireEmployee(m) {
+    const ok = window.confirm(`Fire ${m.full_name || m.email}? They will immediately lose access. You can reinstate them later from the Former Employees list.`)
+    if (!ok) return
+    setFireBusyId(m.id)
+    setFireMessage(null)
+    try {
+      const res = await fetch('/api/fire-employee', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ profile_id: m.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setFireMessage({ type: 'error', text: data.error || 'Failed to remove employee' })
+      } else {
+        setFireMessage({ type: 'success', text: `${m.full_name || m.email} has been removed.` })
+        load()
+      }
+    } catch (err) {
+      setFireMessage({ type: 'error', text: err.message })
+    }
+    setFireBusyId(null)
+  }
+
+  async function reinstateEmployee(m) {
+    setFireBusyId(m.id)
+    setFireMessage(null)
+    try {
+      const res = await fetch('/api/fire-employee', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ profile_id: m.id, reinstate: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setFireMessage({ type: 'error', text: data.error || 'Failed to reinstate employee' })
+      } else {
+        setFireMessage({ type: 'success', text: `${m.full_name || m.email} has been reinstated.` })
+        load()
+      }
+    } catch (err) {
+      setFireMessage({ type: 'error', text: err.message })
+    }
+    setFireBusyId(null)
+  }
+
   const clients = members.filter((m) => m.role === 'client')
+  const activeEmployees = members.filter((m) => m.role !== 'client' && m.is_active !== false)
+  const formerEmployees = members.filter((m) => m.role !== 'client' && m.is_active === false)
   const myTeamName = useMemo(() => teams.find((t) => t.id === profile?.team_id)?.name, [teams, profile])
 
   return (
@@ -294,15 +361,17 @@ export default function Team() {
         <p className="card-hint">
           Stings: the code at the end of a respondent's UID that identifies who collected it — e.g. UID "xyzAS02" carries the sting "AS02". Someone can hold multiple stings (one per client/vendor) — each sting code must be unique across everyone.
         </p>
+        {fireMessage && <div className={fireMessage.type === 'error' ? 'auth-error' : 'auth-success'} style={{ marginBottom: 10 }}>{fireMessage.text}</div>}
         <div className="table-wrap">
           <table className="data-table">
             <thead>
-              <tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Stings</th><th>Joined</th></tr>
+              <tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Stings</th><th>Joined</th><th></th></tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={6} className="empty-row">Loading…</td></tr>}
-              {!loading && members.filter((m) => m.role !== 'client').map((m) => {
+              {loading && <tr><td colSpan={7} className="empty-row">Loading…</td></tr>}
+              {!loading && activeEmployees.map((m) => {
                 const editable = canEditMember(m)
+                const firable = canFireMember(m)
                 const memberStings = stingsFor(m.id)
                 return (
                 <tr key={m.id}>
@@ -373,11 +442,62 @@ export default function Team() {
                     )}
                   </td>
                   <td>{new Date(m.created_at).toLocaleDateString()}</td>
+                  <td>
+                    {firable && (
+                      <button
+                        onClick={() => fireEmployee(m)}
+                        disabled={fireBusyId === m.id}
+                        className="btn-ghost"
+                        style={{ color: '#f87171', borderColor: 'rgba(248,113,113,0.4)', whiteSpace: 'nowrap' }}
+                        title="Remove this employee's access"
+                      >
+                        {fireBusyId === m.id ? '…' : '🔥 Fire'}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               )})}
             </tbody>
           </table>
         </div>
+
+        {formerEmployees.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <button className="btn-ghost" onClick={() => setShowFormer(!showFormer)}>
+              {showFormer ? 'Hide' : 'Show'} Former Employees ({formerEmployees.length})
+            </button>
+            {showFormer && (
+              <div className="table-wrap" style={{ marginTop: 10 }}>
+                <table className="data-table">
+                  <thead>
+                    <tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {formerEmployees.map((m) => (
+                      <tr key={m.id} style={{ opacity: 0.6 }}>
+                        <td>{m.full_name || '—'}</td>
+                        <td>{m.email}</td>
+                        <td>{m.role === 'tl' ? 'Survey Analyst' : m.role === 'team_lead' ? 'Team Lead' : m.role}</td>
+                        <td>
+                          {canFireMember({ ...m, id: m.id }) || isAdmin ? (
+                            <button
+                              onClick={() => reinstateEmployee(m)}
+                              disabled={fireBusyId === m.id}
+                              className="btn-ghost"
+                              style={{ whiteSpace: 'nowrap' }}
+                            >
+                              {fireBusyId === m.id ? '…' : 'Reinstate'}
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       </Reveal>
 
