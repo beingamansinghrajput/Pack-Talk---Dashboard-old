@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+cimport { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
@@ -25,9 +25,6 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;')
 }
 
-// Fills [UID] / [STATUS] / [COUNTRY] / [AGE_BAND] placeholders in a client's
-// return URL. If the URL has none of those placeholders, appends status
-// and uid as query params instead so the client still gets the data.
 function buildClientRedirectUrl(template, { uid, status, country, age_band }) {
   if (!template) return null
   const hasPlaceholder = /\[(UID|STATUS|COUNTRY|AGE_BAND)\]/i.test(template)
@@ -288,7 +285,7 @@ function notRegisteredHtml() {
 
 export default async function handler(req, res) {
   const { status } = req.query
-  const uid = req.query.assignUid || req.query.uid
+  let uid = req.query.assignUid || req.query.uid
   let { project, country, age_band } = req.query
 
   if (!uid || !status) {
@@ -301,9 +298,7 @@ export default async function handler(req, res) {
   }
   let mapping = mapping0
 
-  // If no project was given directly in the URL (the query-param links
-  // always include it), fall back to the respondent registry — the client
-  // must have called POST /api/register-respondent for this uid first.
+  // If no project was given directly in the URL
   if (!project) {
     const { data: regRows, error: regError } = await supabase
       .from('respondent_registry')
@@ -325,13 +320,17 @@ export default async function handler(req, res) {
       // Fallback: check if they came through a Panel Entry Link
       const { data: cleRows } = await supabase
         .from('client_link_entries')
-        .select('project_id')
+        .select('project_id, original_uid')
         .eq('client_facing_id', uid)
         .limit(1)
         
       const cleEntry = cleRows && cleRows[0]
       if (cleEntry && cleEntry.project_id) {
         project = cleEntry.project_id
+        // Swap the random number BACK to the original alphabets!
+        if (cleEntry.original_uid) {
+          uid = cleEntry.original_uid
+        }
         country = null
         age_band = null
       } else {
