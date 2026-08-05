@@ -9,14 +9,15 @@ export default async function handler(req, res) {
     return res.status(405).send('Method not allowed')
   }
 
-  const { project, uid, ip, age, opinionsCount, opinions } = req.body
+  const { project, uid, ip, age, gender, opinionsCount, opinions } = req.body
 
-  if (!project || !uid || !age || !opinionsCount || !Array.isArray(opinions) || opinions.length === 0) {
+  if (!project || !uid) {
     return res.status(400).send('Missing required fields.')
   }
 
   const MAX_OPINIONS = 30
-  const trimmedOpinions = opinions.slice(0, MAX_OPINIONS)
+  const safeOpinions = Array.isArray(opinions) ? opinions : []
+  const trimmedOpinions = safeOpinions.slice(0, MAX_OPINIONS)
   const paddedOpinions = [
     ...trimmedOpinions,
     ...Array(MAX_OPINIONS - trimmedOpinions.length).fill(''),
@@ -37,8 +38,9 @@ export default async function handler(req, res) {
       project,
       uid,
       ip || '',
-      age,
-      opinionsCount,
+      gender || '',
+      age || '',
+      opinionsCount || 0,
       ...paddedOpinions,
       new Date().toISOString(),
     ]]
