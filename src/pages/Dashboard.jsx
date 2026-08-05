@@ -30,8 +30,8 @@ function isThisMonth(dateStr) {
 
 function getIRHealth(project, counts) {
   const sample = counts.Completed + counts.Terminated
-  if (sample < IR_MIN_SAMPLE) {
-    return { status: 'insufficient', label: 'Insufficient data', color: '#6B7280', actualIR: null }
+  if (sample === 0) {
+    return { status: 'insufficient', label: 'No data', color: '#6B7280', actualIR: null }
   }
   const actualIR = (counts.Completed / sample) * 100
   const expectedIR = Number(project.ir) || 0
@@ -50,7 +50,7 @@ export default function Dashboard() {
   const { profile, isAdmin } = useAuth()
   const [projects, setProjects] = useState([])
   const [responses, setResponses] = useState([])
-  const [allowedProjectIds, setAllowedProjectIds] = useState(null)
+  const [allowedProjectIds, setAllowedProjectIds] = useState(null) // null = no restriction (admin)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
