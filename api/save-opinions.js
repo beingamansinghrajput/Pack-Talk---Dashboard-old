@@ -1,4 +1,10 @@
 import { google } from 'googleapis'
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.VITE_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 const SHEET_TAB_NAME = 'PackTalk Open-Ended Opinions'
 const Q = String.fromCharCode(39) // a guaranteed straight single-quote character
@@ -24,6 +30,23 @@ export default async function handler(req, res) {
   ]
 
   try {
+    // 1. Update Supabase Responses Table
+    const { error: dbError } = await supabase
+      .from('responses')
+      .update({
+        age: age || null,
+        gender: gender || null,
+        opinions_count: opinionsCount ? parseInt(opinionsCount, 10) : 0,
+        opinions: JSON.stringify(trimmedOpinions)
+      })
+      .eq('project_id', project)
+      .eq('uid', uid)
+
+    if (dbError) {
+      console.error('Supabase update error:', dbError)
+    }
+
+    // 2. Save to Google Sheets
     const auth = new google.auth.GoogleAuth({
       credentials: {
         client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
