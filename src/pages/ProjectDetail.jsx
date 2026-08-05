@@ -479,19 +479,21 @@ export default function ProjectDetail() {
                     />
                   </th>
                 )}
-                <th>#</th>
+                <th>No</th>
+                <th>Project ID</th>
                 <th>UID</th>
-                <th>Start Time</th>
-                <th>End Time</th>
+                <th>Start IP</th>
+                <th>End IP</th>
+                <th>Start Date</th>
+                <th>End Date</th>
                 <th>Duration</th>
                 <th>Country</th>
-                <th>IP Address</th>
                 <th>Status</th>
                 {isAdmin && <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={colCount} className="empty-row">Loading…</td></tr>}
+              {loading && <tr><td colSpan={colCount + 2} className="empty-row">Loading…</td></tr>}
               {!loading && rows.map((r, i) => (
                 <tr key={r.id}>
                   {isAdmin && (
@@ -504,12 +506,14 @@ export default function ProjectDetail() {
                     </td>
                   )}
                   <td>{page * PAGE_SIZE + i + 1}</td>
+                  <td>{projectId}</td>
                   <td>{r.uid}</td>
+                  <td>{r.ip_address || '—'}</td>
+                  <td>{r.ip_address || '—'}</td>
                   <td>{new Date(r.start_time).toLocaleString()}</td>
                   <td>{r.end_time ? new Date(r.end_time).toLocaleString() : '—'}</td>
                   <td>{r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
-                  <td>{r.country}</td>
-                  <td>{r.ip_address || '—'}</td>
+                  <td>{r.country || project.country}</td>
                   <td><span className={`badge ${STATUS_CLASS[r.status]}`}>{r.status}</span></td>
                   {isAdmin && (
                     <td>
@@ -521,7 +525,7 @@ export default function ProjectDetail() {
                 </tr>
               ))}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={colCount} className="empty-row">No respondents match the current filters.</td></tr>
+                <tr><td colSpan={colCount + 2} className="empty-row">No respondents match the current filters.</td></tr>
               )}
             </tbody>
           </table>
