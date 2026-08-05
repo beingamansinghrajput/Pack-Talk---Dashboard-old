@@ -243,16 +243,29 @@ export default function ProjectDetail() {
       return
     }
 
-    const headers = ['UID', 'Start Time', 'End Time', 'Duration (min)', 'Country', 'IP Address', 'Status']
-    const csvRows = data.map((r) => [
-      r.uid,
-      r.start_time ? new Date(r.start_time).toLocaleString() : '',
-      r.end_time ? new Date(r.end_time).toLocaleString() : '',
-      r.duration_min ?? '',
-      r.country ?? '',
-      r.ip_address ?? '',
-      r.status ?? '',
-    ])
+    const headers = ['UID', 'Start Time', 'End Time', 'Duration (min)', 'Country', 'IP Address', 'Status', 'Age', 'Gender', 'Opinions Count', 'Opinions']
+    const csvRows = data.map((r) => {
+      let ops = r.opinions || ''
+      if (typeof ops === 'string' && ops.startsWith('[')) {
+        try { ops = JSON.parse(ops).join(' | ') } catch (e) {}
+      } else if (Array.isArray(ops)) {
+        ops = ops.join(' | ')
+      }
+
+      return [
+        r.uid,
+        r.start_time ? new Date(r.start_time).toLocaleString() : '',
+        r.end_time ? new Date(r.end_time).toLocaleString() : '',
+        r.duration_min ?? '',
+        r.country ?? '',
+        r.ip_address ?? '',
+        r.status ?? '',
+        r.age ?? '',
+        r.gender ?? '',
+        r.opinions_count ?? '',
+        ops
+      ]
+    })
 
     const escapeCell = (cell) => {
       const s = String(cell ?? '')
