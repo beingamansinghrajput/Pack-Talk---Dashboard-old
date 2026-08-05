@@ -17,8 +17,8 @@ const IR_WARN_THRESHOLD = 20
 
 function getIRHealth(expectedIR, completedCount, terminatedCount) {
   const sample = completedCount + terminatedCount
-  if (sample < IR_MIN_SAMPLE) {
-    return { status: 'insufficient', label: 'Insufficient data yet', color: '#6B7280', actualIR: null, sample }
+  if (sample === 0) {
+    return { status: 'insufficient', label: 'No data', color: '#6B7280', actualIR: null, sample }
   }
   const actualIR = (completedCount / sample) * 100
   const diff = Math.abs(actualIR - expectedIR)
