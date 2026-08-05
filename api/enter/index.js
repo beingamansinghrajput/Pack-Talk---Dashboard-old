@@ -59,8 +59,7 @@ export default async function handler(req, res) {
     return res.status(400).send(errorHtml('Missing Link', 'This entry link is incomplete.'))
   }
 
-  // Looked up by the opaque entry_token only — the project's real ID is
-  // never present in this URL and never exposed to whoever clicks it.
+  // Looked up by the opaque entry_token only
   const { data: projectRow, error: projectError } = await supabase
     .from('projects')
     .select('project_id, survey_link, status')
@@ -103,9 +102,12 @@ export default async function handler(req, res) {
 
   const finalLink = buildFinalLink(projectRow.survey_link, clientFacingId)
 
+  // Grab the original alphabets from the URL so we can save it!
+  const originalUid = req.query.uid;
   const { error: entryError } = await supabase.from('client_link_entries').insert({
     project_id: projectRow.project_id,
     client_facing_id: clientFacingId,
+    original_uid: originalUid,
     final_link: finalLink,
   })
 
