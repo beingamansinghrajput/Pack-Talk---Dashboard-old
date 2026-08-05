@@ -50,7 +50,7 @@ export default function ProjectDetail() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
-  const [irCounts, setIrCounts] = useState({ Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 })
+  const [irCounts, setIrCounts] = useState({ Completed: 0, Terminated: 0, QuotaFull: 0, Abandoned: 0 })
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
 
@@ -74,7 +74,13 @@ export default function ProjectDetail() {
 
   function buildQuery(base) {
     let q = base.eq('project_id', projectId).eq('deleted', false)
-    if (statusFilter) q = q.eq('status', statusFilter)
+    if (!isAdmin) {
+      q = q.not('uid', 'ilike', 'NOSTING-%')
+    }
+    if (statusFilter) {
+      const sf = statusFilter === 'Abandoned' ? 'Disqualify' : statusFilter
+      q = q.eq('status', sf)
+    }
     if (countryFilter.trim()) q = q.ilike('country', `%${countryFilter.trim()}%`)
     if (dateFrom) q = q.gte('start_time', dateFrom)
     if (dateTo) q = q.lte('start_time', dateTo + 'T23:59:59')
@@ -103,11 +109,15 @@ export default function ProjectDetail() {
 
     const { data: allStatusRows } = await supabase
       .from('responses')
-      .select('status')
+      .select('status, uid')
       .eq('project_id', projectId)
       .eq('deleted', false)
-    const counts = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
-    ;(allStatusRows || []).forEach((r) => { if (counts[r.status] !== undefined) counts[r.status]++ })
+    const counts = { Completed: 0, Terminated: 0, QuotaFull: 0, Abandoned: 0 }
+    ;(allStatusRows || []).forEach((r) => { 
+      if (!isAdmin && r.uid && r.uid.startsWith('NOSTING-')) return;
+      const s = r.status === 'Disqualify' ? 'Abandoned' : r.status;
+      if (counts[s] !== undefined) counts[s]++; 
+    })
     setIrCounts(counts)
   }
 
@@ -342,7 +352,7 @@ export default function ProjectDetail() {
                 </table>
               </div>
               <p className="card-hint" style={{ marginTop: 8 }}>
-                QuotaFull ({irCounts.QuotaFull}) and Disqualify ({irCounts.Disqualify}) are excluded from this ratio.
+                QuotaFull ({irCounts.QuotaFull}) and Abandoned ({irCounts.Abandoned}) are excluded from this ratio.
               </p>
             </>
           )}
@@ -428,7 +438,7 @@ export default function ProjectDetail() {
               <option value="Completed">Completed</option>
               <option value="Terminated">Terminated</option>
               <option value="QuotaFull">QuotaFull</option>
-              <option value="Disqualify">Disqualify</option>
+              <option value="Abandoned">Abandoned</option>
             </select>
           </label>
           <label>Country
@@ -514,7 +524,7 @@ export default function ProjectDetail() {
                   <td>{r.end_time ? new Date(r.end_time).toLocaleString() : '—'}</td>
                   <td>{r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
                   <td>{r.country || project.country}</td>
-                  <td><span className={`badge ${STATUS_CLASS[r.status]}`}>{r.status}</span></td>
+                  <td><span className={`badge ${STATUS_CLASS[r.status]}`}>{r.status === 'Disqualify' ? 'Abandoned' : r.status}</span></td>
                   {isAdmin && (
                     <td>
                       <button className="btn-ghost" onClick={() => handleDelete(r)} style={{ color: '#f87171' }}>
