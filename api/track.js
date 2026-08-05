@@ -13,6 +13,8 @@ const STATUS_MAP = {
 }
 
 const MAX_OPINIONS = 30
+const RATE_LIMIT_MAX_HITS = 10
+const RATE_LIMIT_WINDOW_SECONDS = 60
 
 function escapeHtml(str) {
   return String(str)
@@ -23,6 +25,9 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;')
 }
 
+// Fills [UID] / [STATUS] / [COUNTRY] / [AGE_BAND] placeholders in a client's
+// return URL. If the URL has none of those placeholders, appends status
+// and uid as query params instead so the client still gets the data.
 function buildClientRedirectUrl(template, { uid, status, country, age_band }) {
   if (!template) return null
   const hasPlaceholder = /\[(UID|STATUS|COUNTRY|AGE_BAND)\]/i.test(template)
@@ -132,12 +137,20 @@ function opinionsFormHtml({ project, uid, ip, redirectUrl }) {
         <h1>Almost done</h1>
         <p class="sub">Please answer a couple of quick questions before you finish.</p>
         <form id="opinionsForm">
-          <label>Your Age</label>
-          <input type="number" id="age" min="1" max="120" required />
+          <label>Your Age (Optional)</label>
+          <input type="number" id="age" min="1" max="120" />
 
-          <label>Number of Opinions Typed</label>
-          <input type="number" id="opinionsCount" min="1" max="${MAX_OPINIONS}" required />
-          <div class="hint">Enter how many separate opinions you have, then the matching number of boxes will appear below.</div>
+          <label>Your Gender (Optional)</label>
+          <select id="gender" style="width: 100%; box-sizing: border-box; background: #0f0f16; border: 1px solid #2a2a3a; border-radius: 8px; padding: 10px 12px; color: #fff; font-size: 14px; font-family: inherit; margin-bottom: 6px;">
+            <option value="">-- Not Specified --</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Others">Others</option>
+          </select>
+
+          <label>Number of Opinions Typed (Optional)</label>
+          <input type="number" id="opinionsCount" min="0" max="${MAX_OPINIONS}" value="0" />
+          <div class="hint">Enter how many separate opinions you have (if any), then the matching number of boxes will appear below.</div>
 
           <div id="opinionBoxes"></div>
 
@@ -155,7 +168,7 @@ function opinionsFormHtml({ project, uid, ip, redirectUrl }) {
 
         function renderBoxes() {
           let n = parseInt(countInput.value, 10)
-          if (isNaN(n) || n < 1) n = 0
+          if (isNaN(n) || n < 0) n = 0
           if (n > MAX_OPINIONS) {
             n = MAX_OPINIONS
             countInput.value = MAX_OPINIONS
@@ -185,11 +198,12 @@ function opinionsFormHtml({ project, uid, ip, redirectUrl }) {
           errMsg.textContent = ''
 
           const age = document.getElementById('age').value
-          const opinionsCount = countInput.value
+          const gender = document.getElementById('gender').value
+          const opinionsCount = countInput.value || 0
           const textareas = Array.from(boxesContainer.querySelectorAll('textarea'))
           const opinions = textareas.map(t => t.value.trim())
 
-          if (opinions.length === 0 || opinions.some(o => o.length === 0)) {
+          if (parseInt(opinionsCount, 10) > 0 && (opinions.length === 0 || opinions.some(o => o.length === 0))) {
             errMsg.textContent = 'Please fill in all opinion boxes.'
             return
           }
@@ -206,6 +220,7 @@ function opinionsFormHtml({ project, uid, ip, redirectUrl }) {
                 uid: ${JSON.stringify(uid)},
                 ip: ${JSON.stringify(ip)},
                 age,
+                gender,
                 opinionsCount,
                 opinions,
               }),
@@ -440,8 +455,6 @@ export default async function handler(req, res) {
       return res.status(500).send('Error logging response: ' + error.message)
     }
   }
-
-  // (Removed floating promise that updates respondent_registry.status since the column doesn't exist)
 
   let clientRedirectTemplate = null
   if (country) {
