@@ -59,7 +59,8 @@ export default async function handler(req, res) {
     return res.status(400).send(errorHtml('Missing Link', 'This entry link is incomplete.'))
   }
 
-  // Looked up by the opaque entry_token only
+  // Looked up by the opaque entry_token only — the project's real ID is
+  // never present in this URL and never exposed to whoever clicks it.
   const { data: projectRow, error: projectError } = await supabase
     .from('projects')
     .select('project_id, survey_link, status')
@@ -102,18 +103,32 @@ export default async function handler(req, res) {
 
   const finalLink = buildFinalLink(projectRow.survey_link, clientFacingId)
 
-  // Grab the original alphabets from the URL so we can save it!
   const originalUid = req.query.uid;
+  const dbUid = originalUid || ("NOSTING-" + clientFacingId);
+
   const { error: entryError } = await supabase.from('client_link_entries').insert({
     project_id: projectRow.project_id,
     client_facing_id: clientFacingId,
-    original_uid: originalUid,
+    original_uid: dbUid,
     final_link: finalLink,
   })
 
   if (entryError) {
     console.error('client_link_entries insert failed:', entryError.message)
   }
+
+  // Log the initial "Abandoned" hit in responses.
+  // We don't block or error if it fails (e.g. duplicate uid) since they should still proceed to the survey.
+  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket?.remoteAddress || 'unknown';
+  await supabase.from('responses').insert({
+    project_id: projectRow.project_id,
+    uid: dbUid,
+    start_time: new Date().toISOString(),
+    screener_pass: true,
+    quota_status: 'Open',
+    completed: false,
+    ip_address: ip,
+  })
 
   res.writeHead(302, { Location: finalLink })
   res.end()
