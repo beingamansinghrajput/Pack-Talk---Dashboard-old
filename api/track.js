@@ -317,14 +317,28 @@ export default async function handler(req, res) {
     }
 
     const registration = regRows && regRows[0]
-    if (!registration || !registration.project_id) {
-      res.setHeader('Content-Type', 'text/html')
-      return res.status(400).send(notRegisteredHtml())
+    if (registration && registration.project_id) {
+      project = registration.project_id
+      country = registration.country || null
+      age_band = registration.age_band || null
+    } else {
+      // Fallback: check if they came through a Panel Entry Link
+      const { data: cleRows } = await supabase
+        .from('client_link_entries')
+        .select('project_id')
+        .eq('client_facing_id', uid)
+        .limit(1)
+        
+      const cleEntry = cleRows && cleRows[0]
+      if (cleEntry && cleEntry.project_id) {
+        project = cleEntry.project_id
+        country = null
+        age_band = null
+      } else {
+        res.setHeader('Content-Type', 'text/html')
+        return res.status(400).send(notRegisteredHtml())
+      }
     }
-
-    project = registration.project_id
-    country = registration.country || null
-    age_band = registration.age_band || null
   }
 
   const forwarded = req.headers['x-forwarded-for']
