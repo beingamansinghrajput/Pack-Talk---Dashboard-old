@@ -1,4 +1,4 @@
-cimport { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
@@ -13,8 +13,6 @@ const STATUS_MAP = {
 }
 
 const MAX_OPINIONS = 30
-const RATE_LIMIT_MAX_HITS = 10
-const RATE_LIMIT_WINDOW_SECONDS = 60
 
 function escapeHtml(str) {
   return String(str)
@@ -236,29 +234,6 @@ function opinionsFormHtml({ project, uid, ip, redirectUrl }) {
   `
 }
 
-function rateLimitedHtml() {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Too Many Requests</title>
-      <style>
-        body { font-family: -apple-system, sans-serif; background: #0a0a0f; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
-        .card { background: #16161f; border: 1px solid #2a2a3a; border-radius: 16px; padding: 28px 32px; max-width: 480px; width: 100%; text-align: center; }
-        h1 { font-size: 18px; margin: 0 0 10px 0; }
-        p { color: #999; font-size: 14px; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h1>Too Many Requests</h1>
-        <p>This link has been hit too many times in a short period from this connection. Please wait a moment and try again.</p>
-      </div>
-    </body>
-    </html>
-  `
-}
-
 function notRegisteredHtml() {
   return `
     <!DOCTYPE html>
@@ -343,21 +318,6 @@ export default async function handler(req, res) {
   const forwarded = req.headers['x-forwarded-for']
   const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket?.remoteAddress || 'unknown'
 
-  const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_SECONDS * 1000).toISOString()
-  const { count: recentHitCount } = await supabase
-    .from('track_hits')
-    .select('id', { count: 'exact', head: true })
-    .eq('project_id', project)
-    .eq('ip_address', ip)
-    .gte('created_at', windowStart)
-
-  if ((recentHitCount || 0) >= RATE_LIMIT_MAX_HITS) {
-    res.setHeader('Content-Type', 'text/html')
-    return res.status(429).send(rateLimitedHtml())
-  }
-
-  supabase.from('track_hits').insert({ project_id: project, ip_address: ip }).then(() => {})
-
   const { data: existingIpRows } = await supabase
     .from('responses')
     .select('id')
@@ -415,10 +375,6 @@ export default async function handler(req, res) {
       return res.status(500).send('Error logging response: ' + error.message)
     }
   }
-
-  // If this hit came through the respondent registry, mark it consumed so
-  // admins can see which registrations have actually been used.
-  supabase.from('respondent_registry').update({ status: 'consumed' }).eq('uid', uid).eq('project_id', project).then(() => {})
 
   let clientRedirectTemplate = null
   if (country) {
