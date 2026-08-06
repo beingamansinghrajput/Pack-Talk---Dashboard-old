@@ -102,7 +102,7 @@ export default function LinkGenerator() {
           // Saved exactly as the client gave it — including their own uid
           // placeholder. Nothing is substituted here; a fresh ID gets
           // generated per real respondent at click-through time instead,
-          // by api/enter/[token].js.
+          // by api/enter/index.js.
           survey_link: clientLink,
           entry_token: entryToken,
           created_by: user.id,
@@ -122,7 +122,7 @@ export default function LinkGenerator() {
   }
 
   function entryLinkFor(entry_token) {
-    return `${ENTRY_BASE}/${entry_token}`
+    return `${ENTRY_BASE}?p=${entry_token}`
   }
 
   function copyResult() {
