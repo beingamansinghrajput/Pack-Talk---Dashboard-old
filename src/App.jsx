@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import Navbar from './components/Navbar'
+import AmbientBackground from './components/AmbientBackground'
+import GlobalCardMotion from './components/GlobalCardMotion'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import ProjectDetail from './pages/ProjectDetail'
@@ -45,6 +47,8 @@ function AppRoutes() {
   }
   return (
     <BrowserRouter>
+      <AmbientBackground />
+      <GlobalCardMotion />
       {session && <Navbar />}
       <Routes>
         <Route
