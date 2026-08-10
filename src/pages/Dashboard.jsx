@@ -92,7 +92,7 @@ export default function Dashboard() {
     const c = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
     const visibleIds = new Set(projects.map((p) => p.project_id))
     responses.filter((r) => visibleIds.has(r.project_id) && isToday(r.start_time)).forEach((r) => {
-      if (!isAdmin && r.uid && r.uid.startsWith('NOSTING-')) return;
+      if (!isAdmin && r.uid && r.uid.startsWith('UNASSIGNED-')) return;
       c[r.status]++
     })
     return c
@@ -102,7 +102,7 @@ export default function Dashboard() {
     const c = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
     const visibleIds = new Set(projects.map((p) => p.project_id))
     responses.filter((r) => visibleIds.has(r.project_id) && isThisMonth(r.start_time)).forEach((r) => {
-      if (!isAdmin && r.uid && r.uid.startsWith('NOSTING-')) return;
+      if (!isAdmin && r.uid && r.uid.startsWith('UNASSIGNED-')) return;
       c[r.status]++
     })
     return c
@@ -114,7 +114,7 @@ export default function Dashboard() {
         (p.project_id + p.project_name + p.country).toLowerCase().includes(search.toLowerCase())
       )
       .map((p) => {
-        const rows = responses.filter((r) => r.project_id === p.project_id && (isAdmin || !r.uid || !r.uid.startsWith('NOSTING-')))
+        const rows = responses.filter((r) => r.project_id === p.project_id && (isAdmin || !r.uid || !r.uid.startsWith('UNASSIGNED-')))
         const counts = { Completed: 0, Terminated: 0, QuotaFull: 0, Disqualify: 0 }
         rows.forEach((r) => counts[r.status]++)
         const irHealth = getIRHealth(p, counts)
