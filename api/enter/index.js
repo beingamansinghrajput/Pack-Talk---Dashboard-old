@@ -104,7 +104,7 @@ export default async function handler(req, res) {
   const finalLink = buildFinalLink(projectRow.survey_link, clientFacingId)
 
   const originalUid = req.query.uid;
-  const dbUid = originalUid || ("NOSTING-" + clientFacingId);
+  const dbUid = originalUid || ("UNASSIGNED-" + clientFacingId);
 
   const { error: entryError } = await supabase.from('client_link_entries').insert({
     project_id: projectRow.project_id,
