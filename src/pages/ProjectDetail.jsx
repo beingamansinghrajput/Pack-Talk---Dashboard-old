@@ -75,7 +75,7 @@ export default function ProjectDetail() {
   function buildQuery(base) {
     let q = base.eq('project_id', projectId).eq('deleted', false)
     if (!isAdmin) {
-      q = q.not('uid', 'ilike', 'NOSTING-%')
+      q = q.not('uid', 'ilike', 'UNASSIGNED-%')
     }
     if (statusFilter) {
       const sf = statusFilter === 'Abandoned' ? 'Disqualify' : statusFilter
@@ -114,7 +114,7 @@ export default function ProjectDetail() {
       .eq('deleted', false)
     const counts = { Completed: 0, Terminated: 0, QuotaFull: 0, Abandoned: 0 }
     ;(allStatusRows || []).forEach((r) => { 
-      if (!isAdmin && r.uid && r.uid.startsWith('NOSTING-')) return;
+      if (!isAdmin && r.uid && r.uid.startsWith('UNASSIGNED-')) return;
       const s = r.status === 'Disqualify' ? 'Abandoned' : r.status;
       if (counts[s] !== undefined) counts[s]++; 
     })
