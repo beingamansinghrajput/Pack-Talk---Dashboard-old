@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { withRetry } from '../_lib/withRetry.js'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
@@ -61,11 +62,13 @@ export default async function handler(req, res) {
 
   // Looked up by the opaque entry_token only — the project's real ID is
   // never present in this URL and never exposed to whoever clicks it.
-  const { data: projectRow, error: projectError } = await supabase
-    .from('projects')
-    .select('project_id, survey_link, status')
-    .eq('entry_token', token)
-    .maybeSingle()
+  const { data: projectRow, error: projectError } = await withRetry(() =>
+    supabase
+      .from('projects')
+      .select('project_id, survey_link, status')
+      .eq('entry_token', token)
+      .maybeSingle()
+  )
 
   if (projectError) {
     res.setHeader('Content-Type', 'text/html')
@@ -85,11 +88,13 @@ export default async function handler(req, res) {
   let clientFacingId = null
   for (let attempt = 0; attempt < 5; attempt++) {
     const candidate = randomClientFacingId()
-    const { data: existing } = await supabase
-      .from('client_link_entries')
-      .select('id')
-      .eq('client_facing_id', candidate)
-      .maybeSingle()
+    const { data: existing } = await withRetry(() =>
+      supabase
+        .from('client_link_entries')
+        .select('id')
+        .eq('client_facing_id', candidate)
+        .maybeSingle()
+    )
     if (!existing) {
       clientFacingId = candidate
       break
@@ -106,12 +111,14 @@ export default async function handler(req, res) {
   const originalUid = req.query.uid;
   const dbUid = originalUid || ("UNASSIGNED-" + clientFacingId);
 
-  const { error: entryError } = await supabase.from('client_link_entries').insert({
-    project_id: projectRow.project_id,
-    client_facing_id: clientFacingId,
-    original_uid: dbUid,
-    final_link: finalLink,
-  })
+  const { error: entryError } = await withRetry(() =>
+    supabase.from('client_link_entries').insert({
+      project_id: projectRow.project_id,
+      client_facing_id: clientFacingId,
+      original_uid: dbUid,
+      final_link: finalLink,
+    })
+  )
 
   if (entryError) {
     console.error('client_link_entries insert failed:', entryError.message)
@@ -120,15 +127,17 @@ export default async function handler(req, res) {
   // Log the initial "Abandoned" hit in responses.
   // We don't block or error if it fails (e.g. duplicate uid) since they should still proceed to the survey.
   const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket?.remoteAddress || 'unknown';
-  await supabase.from('responses').insert({
-    project_id: projectRow.project_id,
-    uid: dbUid,
-    start_time: new Date().toISOString(),
-    screener_pass: true,
-    quota_status: 'Open',
-    completed: false,
-    ip_address: ip,
-  })
+  await withRetry(() =>
+    supabase.from('responses').insert({
+      project_id: projectRow.project_id,
+      uid: dbUid,
+      start_time: new Date().toISOString(),
+      screener_pass: true,
+      quota_status: 'Open',
+      completed: false,
+      ip_address: ip,
+    })
+  )
 
   res.writeHead(302, { Location: finalLink })
   res.end()
