@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { withRetry } from './_lib/withRetry.js'
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
@@ -356,11 +357,13 @@ export default async function handler(req, res) {
 
   // 1. Unconditionally check client_link_entries to map the opaque client_facing_id 
   // back to the original UID and fetch the true start time.
-  const { data: cleRows } = await supabase
-    .from('client_link_entries')
-    .select('project_id, original_uid, created_at')
-    .eq('client_facing_id', uid)
-    .limit(1)
+  const { data: cleRows } = await withRetry(() =>
+    supabase
+      .from('client_link_entries')
+      .select('project_id, original_uid, created_at')
+      .eq('client_facing_id', uid)
+      .limit(1)
+  )
 
   const cleEntry = cleRows && cleRows[0]
   if (cleEntry) {
@@ -372,12 +375,14 @@ export default async function handler(req, res) {
   // 2. If no project was found (either directly in URL or via entry link),
   // fall back to the respondent registry API.
   if (!project) {
-    const { data: regRows, error: regError } = await supabase
-      .from('respondent_registry')
-      .select('project_id, country, age_band')
-      .eq('uid', uid)
-      .order('registered_at', { ascending: false })
-      .limit(1)
+    const { data: regRows, error: regError } = await withRetry(() =>
+      supabase
+        .from('respondent_registry')
+        .select('project_id, country, age_band')
+        .eq('uid', uid)
+        .order('registered_at', { ascending: false })
+        .limit(1)
+    )
 
     if (regError) {
       return res.status(500).send('Error looking up respondent registration: ' + regError.message)
@@ -397,12 +402,14 @@ export default async function handler(req, res) {
   const forwarded = req.headers['x-forwarded-for']
   const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket?.remoteAddress || 'unknown'
 
-  const { data: existingIpRows } = await supabase
-    .from('responses')
-    .select('id')
-    .eq('project_id', project)
-    .eq('ip_address', ip)
-    .limit(1)
+  const { data: existingIpRows } = await withRetry(() =>
+    supabase
+      .from('responses')
+      .select('id')
+      .eq('project_id', project)
+      .eq('ip_address', ip)
+      .limit(1)
+  )
 
   const isDuplicateIp = existingIpRows && existingIpRows.length > 0
   let finalStatusKey = status.toLowerCase()
@@ -432,7 +439,7 @@ export default async function handler(req, res) {
     responseData.age_band = age_band
   }
 
-  const { error } = await supabase.from('responses').insert(responseData)
+  const { error } = await withRetry(() => supabase.from('responses').insert(responseData))
 
   if (error) {
     if (error.code === '23503') {
