@@ -402,12 +402,19 @@ export default async function handler(req, res) {
   const forwarded = req.headers['x-forwarded-for']
   const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket?.remoteAddress || 'unknown'
 
+  // Only treat this as a duplicate if a DIFFERENT respondent already
+  // COMPLETED this project from the same IP. Shared/NAT'd IPs (offices,
+  // mobile carriers, VPNs) are common in panel traffic, so matching on IP
+  // alone — regardless of status or who it was — was force-downgrading
+  // legitimate quotafull/terminate/security hits to Terminate.
   const { data: existingIpRows } = await withRetry(() =>
     supabase
       .from('responses')
-      .select('id')
+      .select('id, uid')
       .eq('project_id', project)
       .eq('ip_address', ip)
+      .eq('completed', true)
+      .neq('uid', uid)
       .limit(1)
   )
 
