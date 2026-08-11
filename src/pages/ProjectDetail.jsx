@@ -340,55 +340,15 @@ export default function ProjectDetail() {
       <h1>Project Details: {projectId}</h1>
       {project && <p className="page-sub">{project.project_name} · {project.country} · Target {project.target}</p>}
 
-      {project && (project.description || isAdmin) && (
-        <Reveal>
-        <div className="card" style={{ marginTop: 4 }}>
-          <div className="section-header-row">
-            <h2 className="card-title">Description</h2>
-            {isAdmin && !editingDescription && (
-              <button className="btn-ghost" onClick={startEditDescription}>
-                {project.description ? 'Edit' : 'Add Description'}
-              </button>
-            )}
-          </div>
-          {editingDescription ? (
-            <div>
-              <textarea
-                value={descriptionDraft}
-                onChange={(e) => setDescriptionDraft(e.target.value)}
-                placeholder="Brief background on this survey — target audience, objective, and so on."
-                rows={4}
-                style={{ width: '100%', boxSizing: 'border-box' }}
-              />
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button className="btn-primary" onClick={saveDescription} disabled={descriptionBusy}>
-                  {descriptionBusy ? 'Saving…' : 'Save'}
-                </button>
-                <button className="btn-ghost" onClick={() => setEditingDescription(false)} disabled={descriptionBusy}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <p className="card-hint" style={{ whiteSpace: 'pre-wrap' }}>
-              {project.description || 'No description yet.'}
-            </p>
-          )}
-        </div>
-        </Reveal>
-      )}
-
       {actionMessage && (
         <div className={actionMessage.type === 'error' ? 'auth-error' : 'auth-success'} style={{ marginBottom: 12 }}>
           {actionMessage.text}
         </div>
       )}
 
-      {(project && irHealth) || (project && (project.entry_token || quotas.length > 0)) ? (
-      <div className="two-col">
       {project && irHealth && (
         <Reveal>
-        <div className="card" style={{ borderLeft: `3px solid ${irHealth.color}`, marginTop: 20 }}>
+        <div className="card" style={{ borderLeft: `3px solid ${irHealth.color}` }}>
           <h2 className="card-title">IR Health Check</h2>
           {irHealth.status === 'insufficient' ? (
             <p className="card-hint">
@@ -505,11 +465,47 @@ export default function ProjectDetail() {
         </div>
         </Reveal>
       )}
-      </div>
-      ) : null}
+
+      {project && (project.description || isAdmin) && (
+        <Reveal>
+        <div className="card">
+          <div className="section-header-row" style={{ marginTop: 0 }}>
+            <h2 className="card-title">Description</h2>
+            {isAdmin && !editingDescription && (
+              <button className="btn-ghost" onClick={startEditDescription}>
+                {project.description ? 'Edit' : 'Add Description'}
+              </button>
+            )}
+          </div>
+          {editingDescription ? (
+            <div>
+              <textarea
+                value={descriptionDraft}
+                onChange={(e) => setDescriptionDraft(e.target.value)}
+                placeholder="Brief background on this survey — target audience, objective, and so on."
+                rows={4}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button className="btn-primary" onClick={saveDescription} disabled={descriptionBusy}>
+                  {descriptionBusy ? 'Saving…' : 'Save'}
+                </button>
+                <button className="btn-ghost" onClick={() => setEditingDescription(false)} disabled={descriptionBusy}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="card-hint" style={{ whiteSpace: 'pre-wrap' }}>
+              {project.description || 'No description yet.'}
+            </p>
+          )}
+        </div>
+        </Reveal>
+      )}
 
       <Reveal>
-      <div className="card" style={{ marginTop: 20 }}>
+      <div className="card">
         <div className="section-header-row" style={{ marginTop: 0, marginBottom: 4 }}>
           <h2 className="card-title" style={{ margin: 0 }}>Member Survey Overview</h2>
           {isAdmin && selectedIds.size > 0 && (
