@@ -384,9 +384,11 @@ export default function ProjectDetail() {
         </div>
       )}
 
+      {(project && irHealth) || (project && (project.entry_token || quotas.length > 0)) ? (
+      <div className="two-col">
       {project && irHealth && (
         <Reveal>
-        <div className="card" style={{ borderLeft: `3px solid ${irHealth.color}` }}>
+        <div className="card" style={{ borderLeft: `3px solid ${irHealth.color}`, marginTop: 20 }}>
           <h2 className="card-title">IR Health Check</h2>
           {irHealth.status === 'insufficient' ? (
             <p className="card-hint">
@@ -438,7 +440,7 @@ export default function ProjectDetail() {
 
       {project && (project.entry_token || quotas.length > 0) && (
         <Reveal>
-        <div className="card">
+        <div className="card" style={{ marginTop: 20 }}>
           <h2 className="card-title">Panel Entry Link{quotas.length > 1 ? 's' : ''}</h2>
           <p className="card-hint">
             This is the link to post to your own panel — every respondent who clicks it gets a fresh, random ID
@@ -503,43 +505,13 @@ export default function ProjectDetail() {
         </div>
         </Reveal>
       )}
-
-      <Reveal>
-      <div className="card">
-        <h2 className="card-title">Filters</h2>
-        <div className="form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
-          <label>Status
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option value="">All</option>
-              <option value="Completed">Completed</option>
-              <option value="Terminated">Terminated</option>
-              <option value="QuotaFull">QuotaFull</option>
-              <option value="Abandoned">Abandoned</option>
-            </select>
-          </label>
-          <label>Country
-            <input value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} placeholder="Search country…" />
-          </label>
-          <label>From Date
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          </label>
-          <label>To Date
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </label>
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          {hasActiveFilters && (
-            <button className="btn-ghost" onClick={clearFilters}>Clear Filters</button>
-          )}
-          <button className="btn-primary" onClick={handleExport}>Download CSV</button>
-        </div>
       </div>
-      </Reveal>
+      ) : null}
 
       <Reveal>
-      <div className="card">
-        <div className="section-header-row">
-          <h2 className="card-title">Member Survey Overview</h2>
+      <div className="card" style={{ marginTop: 20 }}>
+        <div className="section-header-row" style={{ marginTop: 0, marginBottom: 4 }}>
+          <h2 className="card-title" style={{ margin: 0 }}>Member Survey Overview</h2>
           {isAdmin && selectedIds.size > 0 && (
             <button
               className="btn-ghost"
@@ -551,6 +523,51 @@ export default function ProjectDetail() {
             </button>
           )}
         </div>
+
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'flex-end',
+            gap: 12,
+            padding: '14px 16px',
+            margin: '14px 0 18px',
+            background: 'rgba(255, 255, 255, 0.02)',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 'var(--radius-sm)',
+          }}
+        >
+          <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', gap: 6, minWidth: 140 }}>
+            Status
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">All</option>
+              <option value="Completed">Completed</option>
+              <option value="Terminated">Terminated</option>
+              <option value="QuotaFull">QuotaFull</option>
+              <option value="Abandoned">Abandoned</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', gap: 6, minWidth: 160 }}>
+            Country
+            <input value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} placeholder="Search country…" />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', gap: 6, minWidth: 150 }}>
+            From Date
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', gap: 6, minWidth: 150 }}>
+            To Date
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </label>
+
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            {hasActiveFilters && (
+              <button className="btn-ghost" onClick={clearFilters}>Clear Filters</button>
+            )}
+            <button className="btn-primary" onClick={handleExport}>Download CSV</button>
+          </div>
+        </div>
+
         <div className="table-wrap">
           <table className="data-table">
             <thead>
