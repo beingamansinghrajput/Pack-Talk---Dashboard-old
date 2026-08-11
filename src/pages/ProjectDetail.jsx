@@ -57,6 +57,10 @@ export default function ProjectDetail() {
   const [clearConfirmText, setClearConfirmText] = useState('')
   const [clearBusy, setClearBusy] = useState(false)
 
+  const [editingDescription, setEditingDescription] = useState(false)
+  const [descriptionDraft, setDescriptionDraft] = useState('')
+  const [descriptionBusy, setDescriptionBusy] = useState(false)
+
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [deleteBusy, setDeleteBusy] = useState(false)
 
@@ -287,6 +291,27 @@ export default function ProjectDetail() {
     URL.revokeObjectURL(url)
   }
 
+  function startEditDescription() {
+    setDescriptionDraft(project.description || '')
+    setEditingDescription(true)
+  }
+
+  async function saveDescription() {
+    setDescriptionBusy(true)
+    const { error } = await supabase
+      .from('projects')
+      .update({ description: descriptionDraft.trim() || null })
+      .eq('project_id', projectId)
+
+    setDescriptionBusy(false)
+    if (error) {
+      setActionMessage({ type: 'error', text: 'Could not save description: ' + error.message })
+    } else {
+      setProject((prev) => ({ ...prev, description: descriptionDraft.trim() || null }))
+      setEditingDescription(false)
+    }
+  }
+
   function copyLink(key, url) {
     navigator.clipboard.writeText(url)
     setCopiedLinkKey(key)
@@ -314,6 +339,44 @@ export default function ProjectDetail() {
       </div>
       <h1>Project Details: {projectId}</h1>
       {project && <p className="page-sub">{project.project_name} · {project.country} · Target {project.target}</p>}
+
+      {project && (project.description || isAdmin) && (
+        <Reveal>
+        <div className="card" style={{ marginTop: 4 }}>
+          <div className="section-header-row">
+            <h2 className="card-title">Description</h2>
+            {isAdmin && !editingDescription && (
+              <button className="btn-ghost" onClick={startEditDescription}>
+                {project.description ? 'Edit' : 'Add Description'}
+              </button>
+            )}
+          </div>
+          {editingDescription ? (
+            <div>
+              <textarea
+                value={descriptionDraft}
+                onChange={(e) => setDescriptionDraft(e.target.value)}
+                placeholder="Brief background on this survey — target audience, objective, and so on."
+                rows={4}
+                style={{ width: '100%', boxSizing: 'border-box' }}
+              />
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button className="btn-primary" onClick={saveDescription} disabled={descriptionBusy}>
+                  {descriptionBusy ? 'Saving…' : 'Save'}
+                </button>
+                <button className="btn-ghost" onClick={() => setEditingDescription(false)} disabled={descriptionBusy}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="card-hint" style={{ whiteSpace: 'pre-wrap' }}>
+              {project.description || 'No description yet.'}
+            </p>
+          )}
+        </div>
+        </Reveal>
+      )}
 
       {actionMessage && (
         <div className={actionMessage.type === 'error' ? 'auth-error' : 'auth-success'} style={{ marginBottom: 12 }}>
