@@ -321,11 +321,18 @@ export default async function handler(req, res) {
 
   await supabase.from('track_hits').insert({ project_id: project, ip_address: ip })
 
+  // Only treat this as a duplicate if a DIFFERENT respondent already
+  // COMPLETED this project from the same IP. Shared/NAT'd IPs (offices,
+  // mobile carriers, VPNs) are common in panel traffic, so matching on IP
+  // alone — regardless of status or who it was — was force-downgrading
+  // legitimate quotafull/terminate/security hits to Terminate.
   const { data: existingIpRows } = await supabase
     .from('responses')
-    .select('id')
+    .select('id, uid')
     .eq('project_id', project)
     .eq('ip_address', ip)
+    .eq('completed', true)
+    .neq('uid', uid)
     .limit(1)
 
   const isDuplicateIp = existingIpRows && existingIpRows.length > 0
