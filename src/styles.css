@@ -527,7 +527,8 @@ h1 { font-size: 26px; margin: 0 0 4px; font-weight: 700; letter-spacing: -0.01em
 }
 
 /* Everything else needs to sit above the ambient background layer */
-.navbar, .page, .auth-page { position: relative; z-index: 1; }
+.page, .auth-page { position: relative; z-index: 1; }
+.navbar { position: relative; z-index: 50; }
 
 /* ============================================================
    Small interactive 3D touch on the brand logo (Navbar) — a
